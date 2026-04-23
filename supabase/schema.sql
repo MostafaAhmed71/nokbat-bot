@@ -11,6 +11,8 @@ create table if not exists public.students (
   class text,
   committee_number text,
   committee_location text,
+  result_image_url text,
+  result_updated_at timestamptz,
   created_at timestamptz default now()
 );
 
@@ -42,3 +44,7 @@ create table if not exists public.results (
 );
 
 create index if not exists idx_schedule_teacher_day on public.schedule (teacher_id, day);
+
+create unique index if not exists students_national_id_unique
+  on public.students (national_id)
+  where national_id is not null and national_id <> '';

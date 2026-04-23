@@ -1,5 +1,6 @@
 const { createClient } = require('@supabase/supabase-js');
 const { expandSearchPatterns, escapeIlike } = require('../utils/arabicNormalize');
+const { normalizeNationalId } = require('../utils/nationalId');
 
 const url = process.env.SUPABASE_URL;
 const key =
@@ -68,6 +69,34 @@ async function getStudentById(id) {
     .from('students')
     .select('*')
     .eq('id', id)
+    .maybeSingle();
+  return { data, error };
+}
+
+async function getStudentByNationalId(nationalId) {
+  const client = requireClient();
+  const nid = normalizeNationalId(nationalId);
+  if (!nid) return { data: null, error: null };
+  const { data, error } = await client
+    .from('students')
+    .select('*')
+    .eq('national_id', nid)
+    .maybeSingle();
+  return { data, error };
+}
+
+async function setStudentResultImageUrlByNationalId(nationalId, url) {
+  const client = requireClient();
+  const nid = normalizeNationalId(nationalId);
+  if (!nid) return { data: null, error: null };
+  const { data, error } = await client
+    .from('students')
+    .update({
+      result_image_url: url,
+      result_updated_at: new Date().toISOString(),
+    })
+    .eq('national_id', nid)
+    .select('*')
     .maybeSingle();
   return { data, error };
 }
@@ -157,6 +186,8 @@ module.exports = {
   supabase,
   searchStudentsByName,
   getStudentById,
+  getStudentByNationalId,
+  setStudentResultImageUrlByNationalId,
   getTeacherByTelegramId,
   listTeachers,
   listStudentsPage,

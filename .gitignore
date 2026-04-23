@@ -7,3 +7,6 @@ node_modules/
 data/teachers.csv
 data/students.csv
 data/schedule.csv
+
+# ملفات مرفوعة على السيرفر (نتائج/مرفقات)
+files/

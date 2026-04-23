@@ -15,6 +15,7 @@ const {
   formatStudentCommittee,
   studentPickKeyboard,
 } = require('./handlers/student');
+const { promptForNationalId, handleNationalIdText } = require('./handlers/results');
 
 function buildBot() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -61,8 +62,19 @@ function buildBot() {
 
     ctx.session.awaiting = 'student_committee';
     return ctx.reply(
-      'أهلاً بك في بوت متوسطة وثانوية نخبة الشمال الأهلية.\n\nاكتب اسمك الكامل لمعرفة لجنتك.'
+      'أهلاً بك في بوت متوسطة وثانوية نخبة الشمال الأهلية.\n\n- لمعرفة اللجنة: اكتب اسمك الكامل\n- لمعرفة النتيجة: اكتب /result ثم رقم الهوية'
     );
+  });
+
+  bot.command(['result', 'نتيجتي'], async (ctx) => {
+    if (isAdmin(ctx)) {
+      return ctx.reply('هذا الأمر مخصص للطلاب.');
+    }
+    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
+    if (teacher) {
+      return ctx.reply('هذا الأمر مخصص للطلاب.');
+    }
+    return promptForNationalId(ctx);
   });
 
   bot.on('text', async (ctx) => {
@@ -84,6 +96,10 @@ function buildBot() {
 
     if (isAdmin(ctx)) {
       return ctx.reply('استخدم /admin لفتح لوحة تحكم المدير.');
+    }
+
+    if (ctx.session.awaiting === 'student_result') {
+      return handleNationalIdText(ctx, txt);
     }
 
     const { data, error } = await searchStudentsByName(txt);
