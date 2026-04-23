@@ -64,6 +64,15 @@ function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
 }
 
+function escapeHtml(s) {
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 function getFilesRoot() {
   return process.env.FILES_ROOT || path.join(__dirname, '..', 'files');
 }
@@ -177,6 +186,7 @@ function main() {
   }
 
   const app = express();
+  app.use(express.urlencoded({ extended: true }));
 
   const filesRoot = getFilesRoot();
   ensureDir(filesRoot);
@@ -196,6 +206,8 @@ function main() {
     <a href="/admin/import">استيراد Excel</a>
     <span class="muted">|</span>
     <a href="/admin/results">رفع صور النتائج</a>
+    <span class="muted">|</span>
+    <a href="/admin/manual">إدخال يدوي</a>
   </div>
 </div>
 <div class="card">
@@ -203,6 +215,149 @@ function main() {
 </div>`
       )
     );
+  });
+
+  app.get('/admin/manual', basicAuth, (req, res) => {
+    res.send(
+      htmlPage(
+        'إدخال يدوي',
+        `<h2>إدخال يدوي</h2>
+<div class="card">
+  <h3>إضافة/تحديث معلم</h3>
+  <form method="post" action="/admin/manual/teacher">
+    <div class="row">
+      <input name="name" placeholder="اسم المعلم" required />
+      <input name="subject" placeholder="المادة (اختياري)" />
+      <input name="telegram_id" placeholder="Telegram User ID (أرقام)" required />
+      <button type="submit">حفظ</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h3>إضافة/تحديث طالب</h3>
+  <form method="post" action="/admin/manual/student">
+    <div class="row">
+      <input name="name" placeholder="اسم الطالب" required />
+      <input name="national_id" placeholder="رقم الهوية (أرقام)" required />
+    </div>
+    <div class="row" style="margin-top:12px">
+      <input name="grade" placeholder="الصف" />
+      <input name="class" placeholder="الفصل" />
+      <input name="committee_number" placeholder="رقم اللجنة" />
+      <input name="committee_location" placeholder="مكان اللجنة" />
+      <button type="submit">حفظ</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h3>إضافة حصة للجدول</h3>
+  <form method="post" action="/admin/manual/schedule">
+    <div class="row">
+      <input name="teacher_telegram_id" placeholder="Telegram ID للمعلم (أرقام)" required />
+      <input name="day" placeholder="اليوم (مثال: الأحد)" required />
+      <input name="period" placeholder="الحصة (مثال: الأولى)" required />
+    </div>
+    <div class="row" style="margin-top:12px">
+      <input name="grade" placeholder="الصف" />
+      <input name="class" placeholder="الفصل" />
+      <button type="submit">إضافة</button>
+    </div>
+  </form>
+  <p class="muted">تنبيه: يجب أن يكون المعلم موجوداً في teachers أولاً.</p>
+</div>
+
+<div class="card"><a href="/admin">رجوع</a></div>`
+      )
+    );
+  });
+
+  app.post('/admin/manual/teacher', basicAuth, async (req, res) => {
+    try {
+      const name = String(req.body.name || '').trim();
+      const subject = String(req.body.subject || '').trim() || null;
+      const telegram_id = String(req.body.telegram_id || '').trim();
+      if (!name || !telegram_id) return res.status(400).send('name & telegram_id required');
+      const { error } = await supabase
+        .from('teachers')
+        .upsert([{ name, subject, telegram_id }], { onConflict: 'telegram_id' });
+      if (error) throw error;
+      return res.send(
+        htmlPage(
+          'تم',
+          `<div class="card">تم حفظ المعلم: <b>${escapeHtml(name)}</b></div>
+<div class="card"><a href="/admin/manual">رجوع</a></div>`
+        )
+      );
+    } catch (e) {
+      return res.status(500).send(String(e.message || e));
+    }
+  });
+
+  app.post('/admin/manual/student', basicAuth, async (req, res) => {
+    try {
+      const name = String(req.body.name || '').trim();
+      const national_id = normalizeNationalId(req.body.national_id || '');
+      if (!name || !national_id) return res.status(400).send('name & national_id required');
+      const payload = {
+        name,
+        national_id,
+        grade: String(req.body.grade || '').trim() || null,
+        class: String(req.body.class || '').trim() || null,
+        committee_number: String(req.body.committee_number || '').trim() || null,
+        committee_location: String(req.body.committee_location || '').trim() || null,
+      };
+      const { error } = await supabase
+        .from('students')
+        .upsert([payload], { onConflict: 'national_id' });
+      if (error) throw error;
+      return res.send(
+        htmlPage(
+          'تم',
+          `<div class="card">تم حفظ الطالب: <b>${escapeHtml(name)}</b> (هوية: ${escapeHtml(national_id)})</div>
+<div class="card"><a href="/admin/manual">رجوع</a></div>`
+        )
+      );
+    } catch (e) {
+      return res.status(500).send(String(e.message || e));
+    }
+  });
+
+  app.post('/admin/manual/schedule', basicAuth, async (req, res) => {
+    try {
+      const teacherTg = String(req.body.teacher_telegram_id || '').trim();
+      const day = String(req.body.day || '').trim();
+      const period = String(req.body.period || '').trim();
+      if (!teacherTg || !day || !period) return res.status(400).send('teacher_telegram_id, day, period required');
+
+      const { data: teacher, error: tErr } = await supabase
+        .from('teachers')
+        .select('id, name')
+        .eq('telegram_id', teacherTg)
+        .maybeSingle();
+      if (tErr) throw tErr;
+      if (!teacher) return res.status(404).send('المعلم غير موجود بهذا Telegram ID');
+
+      const payload = {
+        teacher_id: teacher.id,
+        day,
+        period,
+        grade: String(req.body.grade || '').trim() || null,
+        class: String(req.body.class || '').trim() || null,
+      };
+      const { error } = await supabase.from('schedule').insert([payload]);
+      if (error) throw error;
+      return res.send(
+        htmlPage(
+          'تم',
+          `<div class="card">تم إضافة حصة للمعلم: <b>${escapeHtml(teacher.name)}</b></div>
+<div class="card"><a href="/admin/manual">رجوع</a></div>`
+        )
+      );
+    } catch (e) {
+      return res.status(500).send(String(e.message || e));
+    }
   });
 
   app.get('/admin/import', basicAuth, (req, res) => {
