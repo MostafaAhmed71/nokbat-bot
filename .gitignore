@@ -1,0 +1,9 @@
+node_modules/
+.env
+*.log
+.DS_Store
+
+# بيانات حقيقية (انسخ من *.example.csv)
+data/teachers.csv
+data/students.csv
+data/schedule.csv
