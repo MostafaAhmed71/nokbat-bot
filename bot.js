@@ -15,6 +15,9 @@ const {
   formatStudentCommittee,
   studentMainKeyboard,
   aiSubjectsKeyboard,
+  quizSubjectsKeyboard,
+  quizAnswerKeyboard,
+  quizAfterKeyboard,
   aiAfterAnswerKeyboard,
   helpKeyboard,
   settingsKeyboard,
@@ -39,6 +42,11 @@ function buildBot() {
           history: [],
           lastAnswer: null,
           style: 'medium',
+        },
+        quiz: {
+          subjectKey: null,
+          points: 0,
+          current: null,
         },
       }),
     })
@@ -123,6 +131,18 @@ function buildBot() {
     return ctx.reply('🤖 اختر المادة التي تريد السؤال عنها:', aiSubjectsKeyboard());
   });
 
+  bot.hears('🧪 اختبار سريع', async (ctx) => {
+    if (isAdmin(ctx)) return ctx.reply('هذا الخيار مخصص للطلاب.');
+    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
+    if (teacher) return ctx.reply('هذا الخيار مخصص للطلاب.');
+    ctx.session.awaiting = null;
+    ctx.session.quiz = ctx.session.quiz || {};
+    ctx.session.quiz.subjectKey = null;
+    ctx.session.quiz.current = null;
+    ctx.session.quiz.points = Number(ctx.session.quiz.points || 0);
+    return ctx.reply('🧪 اختر مادة للاختبار السريع:', quizSubjectsKeyboard());
+  });
+
   bot.hears('ℹ️ المساعدة', async (ctx) => {
     if (isAdmin(ctx)) {
       return ctx.reply('استخدم /admin لفتح لوحة تحكم المدير.');
@@ -163,6 +183,10 @@ function buildBot() {
     ctx.session.ai.history = [];
     ctx.session.ai.lastAnswer = null;
     ctx.session.ai.style = ctx.session.ai.style || 'medium';
+    ctx.session.quiz = ctx.session.quiz || {};
+    ctx.session.quiz.subjectKey = ctx.session.quiz.subjectKey || null;
+    ctx.session.quiz.points = Number(ctx.session.quiz.points || 0);
+    ctx.session.quiz.current = null;
     return ctx.reply('اختر خدمة من القائمة:', studentMainKeyboard());
   });
 
@@ -289,6 +313,8 @@ function buildBot() {
     ctx.session.ai.history = [];
     ctx.session.ai.lastAnswer = null;
     ctx.session.ai.style = ctx.session.ai.style || 'medium';
+    ctx.session.quiz = ctx.session.quiz || {};
+    ctx.session.quiz.current = null;
     return ctx.reply('اختر من القائمة:', studentMainKeyboard());
   });
 
@@ -439,6 +465,128 @@ function buildBot() {
     return ctx.reply(
       '🏁 نتيجتي\n\nاضغط «🏁 نتيجتي» ثم اكتب رقم الهوية/الإقامة.\nإذا لم تُرسل الصورة سيتم إرسال رابط النتيجة.',
       helpKeyboard()
+    );
+  });
+
+  function extractJsonObject(text) {
+    const s = String(text || '');
+    const start = s.indexOf('{');
+    const end = s.lastIndexOf('}');
+    if (start === -1 || end === -1 || end <= start) return null;
+    const raw = s.slice(start, end + 1);
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  async function generateQuiz(ctx) {
+    const subjectKey = ctx.session?.quiz?.subjectKey || 'other';
+    const subjectName = subjectLabel(subjectKey);
+    const prompt = [
+      'اكتب سؤال اختيار من متعدد للطالب باللغة العربية.',
+      `المادة: ${subjectName}.`,
+      'المطلوب: JSON فقط بدون أي شرح أو نص إضافي.',
+      'الشكل المطلوب:',
+      '{"question":"...","options":["A","B","C","D"],"correctIndex":0,"explanation":"شرح مختصر"}',
+      'شروط:',
+      '- options عددها 4 بالضبط.',
+      '- correctIndex رقم من 0 إلى 3.',
+      '- explanation سطرين إلى 5 أسطر.',
+      '- لا تكتب أي شيء خارج JSON.',
+    ].join('\n');
+
+    const raw = await askGemini({
+      subjectKey,
+      question: prompt,
+      history: [],
+      style: 'short',
+    });
+
+    const obj = extractJsonObject(raw);
+    if (!obj) throw new Error('quiz_json_parse_failed');
+    const q = String(obj.question || '').trim();
+    const options = Array.isArray(obj.options) ? obj.options.map((x) => String(x)) : [];
+    const correctIndex = Number(obj.correctIndex);
+    const explanation = String(obj.explanation || '').trim();
+    if (!q || options.length !== 4 || !(correctIndex >= 0 && correctIndex <= 3)) {
+      throw new Error('quiz_invalid_payload');
+    }
+
+    ctx.session.quiz = ctx.session.quiz || {};
+    ctx.session.quiz.current = { question: q, options, correctIndex, explanation };
+    return ctx.reply(
+      `🧪 اختبار سريع — ${subjectName}\n\n${q}\n\n🏅 نقاطك: ${Number(ctx.session.quiz.points || 0)}`,
+      quizAnswerKeyboard(options)
+    );
+  }
+
+  bot.action('quiz:home', async (ctx) => {
+    await ctx.answerCbQuery();
+    ctx.session.quiz = ctx.session.quiz || {};
+    ctx.session.quiz.current = null;
+    ctx.session.quiz.subjectKey = null;
+    return ctx.reply('اختر خدمة من القائمة:', studentMainKeyboard());
+  });
+
+  bot.action('quiz:change_subject', async (ctx) => {
+    await ctx.answerCbQuery();
+    ctx.session.quiz = ctx.session.quiz || {};
+    ctx.session.quiz.subjectKey = null;
+    ctx.session.quiz.current = null;
+    return ctx.reply('📌 اختر مادة للاختبار:', quizSubjectsKeyboard());
+  });
+
+  bot.action('quiz:next', async (ctx) => {
+    await ctx.answerCbQuery();
+    ctx.session.quiz = ctx.session.quiz || {};
+    if (!ctx.session.quiz.subjectKey) {
+      return ctx.reply('اختر مادة للاختبار:', quizSubjectsKeyboard());
+    }
+    try {
+      return await generateQuiz(ctx);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('quiz gen error', e);
+      return ctx.reply('تعذر توليد سؤال الآن. حاول مرة أخرى.', quizAfterKeyboard());
+    }
+  });
+
+  bot.action(/^quiz:sub:([a-z_]+)$/, async (ctx) => {
+    const key = ctx.match[1];
+    await ctx.answerCbQuery();
+    ctx.session.quiz = ctx.session.quiz || {};
+    ctx.session.quiz.subjectKey = key;
+    ctx.session.quiz.points = Number(ctx.session.quiz.points || 0);
+    ctx.session.quiz.current = null;
+    try {
+      return await generateQuiz(ctx);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('quiz gen error', e);
+      return ctx.reply('تعذر توليد سؤال الآن. حاول مرة أخرى.', quizAfterKeyboard());
+    }
+  });
+
+  bot.action(/^quiz:ans:(\d)$/, async (ctx) => {
+    const pick = Number(ctx.match[1]);
+    await ctx.answerCbQuery();
+    const cur = ctx.session?.quiz?.current;
+    if (!cur) {
+      return ctx.reply('لا يوجد سؤال نشط. اضغط «🧪 اختبار سريع» للبدء.');
+    }
+    const correct = Number(cur.correctIndex);
+    const ok = pick === correct;
+    ctx.session.quiz.points = Number(ctx.session.quiz.points || 0) + (ok ? 1 : 0);
+    const chosen = cur.options?.[pick] ?? '';
+    const right = cur.options?.[correct] ?? '';
+    const header = ok ? '✅ إجابة صحيحة!' : '❌ إجابة غير صحيحة';
+    const explain = cur.explanation ? `\n\n📌 الشرح:\n${cur.explanation}` : '';
+    ctx.session.quiz.current = null;
+    return ctx.reply(
+      `${header}\n\nاختيارك: ${chosen}\nالإجابة الصحيحة: ${right}\n\n🏅 نقاطك: ${ctx.session.quiz.points}${explain}`,
+      quizAfterKeyboard()
     );
   });
 

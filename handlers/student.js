@@ -22,6 +22,7 @@ const { Markup } = require('telegraf');
 function studentMainKeyboard() {
   return Markup.keyboard([
     [Markup.button.text('🤖 اسأل مساعد AI')],
+    [Markup.button.text('🧪 اختبار سريع')],
     [Markup.button.text('🧾 لجنّتي'), Markup.button.text('🏁 نتيجتي')],
     [Markup.button.text('⚙️ الإعدادات')],
     [Markup.button.text('ℹ️ المساعدة'), Markup.button.text('🏠 القائمة الرئيسية')],
@@ -107,10 +108,66 @@ function studentPickKeyboard(students) {
   return Markup.inlineKeyboard(rows);
 }
 
+function quizSubjectsKeyboard() {
+  // إعادة استخدام نفس توزيع المواد لكن callback مختلفة
+  const rows = [
+    [
+      Markup.button.callback('📐 رياضيات', 'quiz:sub:math'),
+      Markup.button.callback('🔬 علوم', 'quiz:sub:science'),
+    ],
+    [
+      Markup.button.callback('📖 لغتي', 'quiz:sub:arabic'),
+      Markup.button.callback('📚 إنجليزي', 'quiz:sub:english'),
+    ],
+    [
+      Markup.button.callback('🕌 إسلاميات', 'quiz:sub:islamic'),
+      Markup.button.callback('📜 اجتماعيات', 'quiz:sub:social'),
+    ],
+    [
+      Markup.button.callback('فيزياء', 'quiz:sub:physics'),
+      Markup.button.callback('كمياء', 'quiz:sub:chemistry'),
+      Markup.button.callback('إحياء', 'quiz:sub:biology'),
+    ],
+    [
+      Markup.button.callback('قدرات لفظي', 'quiz:sub:qudrat_verbal'),
+      Markup.button.callback('قدرات كمي', 'quiz:sub:qudrat_quant'),
+    ],
+    [Markup.button.callback('التحصيلي', 'quiz:sub:tahsili')],
+    [Markup.button.callback('🎯 أخرى', 'quiz:sub:other')],
+  ];
+  rows.push([Markup.button.callback('🏠 رجوع للقائمة', 'quiz:home')]);
+  return Markup.inlineKeyboard(rows);
+}
+
+function quizAnswerKeyboard(options) {
+  const opts = Array.isArray(options) ? options.slice(0, 4) : [];
+  const rows = opts.map((t, i) => [
+    Markup.button.callback(String(t).slice(0, 60), `quiz:ans:${i}`),
+  ]);
+  rows.push([
+    Markup.button.callback('🔁 سؤال جديد', 'quiz:next'),
+    Markup.button.callback('🏠 القائمة', 'quiz:home'),
+  ]);
+  return Markup.inlineKeyboard(rows);
+}
+
+function quizAfterKeyboard() {
+  return Markup.inlineKeyboard([
+    [
+      Markup.button.callback('🔁 سؤال جديد', 'quiz:next'),
+      Markup.button.callback('📌 تغيير المادة', 'quiz:change_subject'),
+    ],
+    [Markup.button.callback('🏠 القائمة', 'quiz:home')],
+  ]);
+}
+
 module.exports = {
   formatStudentCommittee,
   studentMainKeyboard,
   aiSubjectsKeyboard,
+  quizSubjectsKeyboard,
+  quizAnswerKeyboard,
+  quizAfterKeyboard,
   aiAfterAnswerKeyboard,
   helpKeyboard,
   settingsKeyboard,
