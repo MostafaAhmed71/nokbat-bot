@@ -30,12 +30,20 @@ function subjectLabel(subjectKey) {
   return map[k] || 'أخرى';
 }
 
-function buildSystemPrompt(subjectKey) {
+function styleHint(style) {
+  const s = String(style || 'medium');
+  if (s === 'short') return 'أسلوب الشرح: مختصر جداً (سطرين إلى 5 أسطر).';
+  if (s === 'detailed') return 'أسلوب الشرح: مفصل مع خطوات مرتبة وأمثلة.';
+  return 'أسلوب الشرح: متوسط (واضح ومباشر مع مثال صغير عند الحاجة).';
+}
+
+function buildSystemPrompt(subjectKey, style) {
   const subj = subjectLabel(subjectKey);
   return [
     'أنت مساعد ذكاء اصطناعي للطلاب في مدرسة نخبة الشمال.',
     'أجب بالعربية فقط.',
     `تخصصك الحالي: ${subj}.`,
+    styleHint(style),
     '',
     'قواعد مهمة:',
     '- اشرح الحل خطوة بخطوة بطريقة بسيطة.',
@@ -62,14 +70,14 @@ function formatHistory(history) {
   return lines.join('\n');
 }
 
-async function askGemini({ subjectKey, question, history }) {
+async function askGemini({ subjectKey, question, history, style }) {
   const apiKey = requireEnv('GEMINI_API_KEY');
   const q = String(question || '').trim();
   if (!q) throw new Error('question is required');
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const modelName = String(process.env.GEMINI_MODEL || 'gemini-1.5-flash').trim();
-  const sys = buildSystemPrompt(subjectKey);
+  const sys = buildSystemPrompt(subjectKey, style);
   const hist = formatHistory(history);
 
   const isGemma = modelName.toLowerCase().startsWith('gemma-');

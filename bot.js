@@ -17,6 +17,7 @@ const {
   aiSubjectsKeyboard,
   aiAfterAnswerKeyboard,
   helpKeyboard,
+  settingsKeyboard,
   studentPickKeyboard,
 } = require('./handlers/student');
 const { promptForNationalId, handleNationalIdText } = require('./handlers/results');
@@ -37,6 +38,7 @@ function buildBot() {
           subjectKey: null,
           history: [],
           lastAnswer: null,
+          style: 'medium',
         },
       }),
     })
@@ -138,6 +140,14 @@ function buildBot() {
     );
   });
 
+  bot.hears('⚙️ الإعدادات', async (ctx) => {
+    if (isAdmin(ctx)) return ctx.reply('استخدم /admin لفتح لوحة تحكم المدير.');
+    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
+    if (teacher) return ctx.reply('الإعدادات متاحة للطلاب فقط حالياً.');
+    const style = ctx.session?.ai?.style || 'medium';
+    return ctx.reply('⚙️ الإعدادات — اختر أسلوب الشرح:', settingsKeyboard(style));
+  });
+
   bot.hears('🏠 القائمة الرئيسية', async (ctx) => {
     if (isAdmin(ctx)) {
       return ctx.reply('استخدم /admin لفتح لوحة تحكم المدير.');
@@ -152,6 +162,7 @@ function buildBot() {
     ctx.session.ai.subjectKey = null;
     ctx.session.ai.history = [];
     ctx.session.ai.lastAnswer = null;
+    ctx.session.ai.style = ctx.session.ai.style || 'medium';
     return ctx.reply('اختر خدمة من القائمة:', studentMainKeyboard());
   });
 
@@ -194,6 +205,7 @@ function buildBot() {
     if (ctx.session.awaiting === 'ai_question') {
       const subjectKey = ctx.session?.ai?.subjectKey || 'other';
       const subjectName = subjectLabel(subjectKey);
+      const style = ctx.session?.ai?.style || 'medium';
       // نبقي وضع الـ AI فعّال للأسئلة المتتابعة حتى يرجع المستخدم للقائمة
       try {
         const history = Array.isArray(ctx.session?.ai?.history)
@@ -203,6 +215,7 @@ function buildBot() {
           subjectKey,
           question: txt,
           history,
+          style,
         });
         const safe =
           answer ||
@@ -275,6 +288,7 @@ function buildBot() {
     ctx.session.ai.subjectKey = null;
     ctx.session.ai.history = [];
     ctx.session.ai.lastAnswer = null;
+    ctx.session.ai.style = ctx.session.ai.style || 'medium';
     return ctx.reply('اختر من القائمة:', studentMainKeyboard());
   });
 
@@ -285,7 +299,22 @@ function buildBot() {
     ctx.session.ai.subjectKey = null;
     ctx.session.ai.history = [];
     ctx.session.ai.lastAnswer = null;
+    ctx.session.ai.style = ctx.session.ai.style || 'medium';
     return ctx.reply('📌 اختر مادة جديدة:', aiSubjectsKeyboard());
+  });
+
+  bot.action('ai:settings', async (ctx) => {
+    await ctx.answerCbQuery();
+    const style = ctx.session?.ai?.style || 'medium';
+    return ctx.reply('⚙️ اختر أسلوب الشرح:', settingsKeyboard(style));
+  });
+
+  bot.action('ai:clear', async (ctx) => {
+    await ctx.answerCbQuery();
+    ctx.session.ai = ctx.session.ai || {};
+    ctx.session.ai.history = [];
+    ctx.session.ai.lastAnswer = null;
+    return ctx.reply('🗑️ تم مسح محادثة الـ AI. اكتب سؤالك الآن 👇', aiAfterAnswerKeyboard());
   });
 
   bot.action('ai:summarize', async (ctx) => {
@@ -297,6 +326,7 @@ function buildBot() {
         subjectKey: ctx.session?.ai?.subjectKey || 'other',
         question: `لخّص الإجابة التالية في 3 نقاط قصيرة:\n\n${last}`,
         history: [],
+        style: 'short',
       });
       return ctx.reply(`📝 ملخص:\n\n${answer}`, aiAfterAnswerKeyboard());
     } catch (e) {
@@ -315,6 +345,7 @@ function buildBot() {
         subjectKey: ctx.session?.ai?.subjectKey || 'other',
         question: `بسّط الشرح جداً لطالب متوسط مع مثال قصير:\n\n${last}`,
         history: [],
+        style: 'short',
       });
       return ctx.reply(`🧠 شرح أبسط:\n\n${answer}`, aiAfterAnswerKeyboard());
     } catch (e) {
@@ -333,6 +364,7 @@ function buildBot() {
         subjectKey: ctx.session?.ai?.subjectKey || 'other',
         question: `وسّع الشرح بالتفصيل مع خطوات مرتبة:\n\n${last}`,
         history: [],
+        style: 'detailed',
       });
       return ctx.reply(`🧩 شرح بالتفصيل:\n\n${answer}`, aiAfterAnswerKeyboard());
     } catch (e) {
@@ -360,11 +392,25 @@ function buildBot() {
     ctx.session.ai.subjectKey = key;
     ctx.session.ai.history = ctx.session.ai.history || [];
     ctx.session.ai.lastAnswer = ctx.session.ai.lastAnswer || null;
+    ctx.session.ai.style = ctx.session.ai.style || 'medium';
     ctx.session.awaiting = 'ai_question';
     await ctx.answerCbQuery();
     return ctx.reply('✍️ اكتب سؤالك (وتقدر تتابع بأسئلة بعده):', {
       reply_markup: { remove_keyboard: true },
     });
+  });
+
+  bot.action(/^set:style:(short|medium|detailed)$/, async (ctx) => {
+    const style = ctx.match[1];
+    ctx.session.ai = ctx.session.ai || {};
+    ctx.session.ai.style = style;
+    await ctx.answerCbQuery('تم التحديث');
+    return ctx.reply(
+      `✅ تم ضبط أسلوب الشرح على: ${
+        style === 'short' ? 'مختصر' : style === 'detailed' ? 'مفصل' : 'متوسط'
+      }`,
+      settingsKeyboard(style)
+    );
   });
 
   bot.action('help:home', async (ctx) => {

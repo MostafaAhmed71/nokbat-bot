@@ -23,6 +23,7 @@ function studentMainKeyboard() {
   return Markup.keyboard([
     [Markup.button.text('🤖 اسأل مساعد AI')],
     [Markup.button.text('🧾 لجنّتي'), Markup.button.text('🏁 نتيجتي')],
+    [Markup.button.text('⚙️ الإعدادات')],
     [Markup.button.text('ℹ️ المساعدة'), Markup.button.text('🏠 القائمة الرئيسية')],
   ]).resize();
 }
@@ -68,8 +69,22 @@ function aiAfterAnswerKeyboard() {
       Markup.button.callback('🧠 أبسط', 'ai:simplify'),
       Markup.button.callback('🧩 تفصيل', 'ai:detail'),
     ],
+    [
+      Markup.button.callback('⚙️ أسلوب الشرح', 'ai:settings'),
+      Markup.button.callback('🗑️ مسح المحادثة', 'ai:clear'),
+    ],
     [Markup.button.callback('اسأل سؤال تاني 🔄', 'ai:again')],
     [Markup.button.callback('ارجع للقائمة 🏠', 'ai:home')],
+  ]);
+}
+
+function settingsKeyboard(currentStyle) {
+  const s = String(currentStyle || 'medium');
+  const opt = (id, label) =>
+    Markup.button.callback(`${s === id ? '✅ ' : ''}${label}`, `set:style:${id}`);
+  return Markup.inlineKeyboard([
+    [opt('short', 'مختصر'), opt('medium', 'متوسط'), opt('detailed', 'مفصل')],
+    [Markup.button.callback('🏠 رجوع للقائمة', 'help:home')],
   ]);
 }
 
@@ -98,5 +113,6 @@ module.exports = {
   aiSubjectsKeyboard,
   aiAfterAnswerKeyboard,
   helpKeyboard,
+  settingsKeyboard,
   studentPickKeyboard,
 };
