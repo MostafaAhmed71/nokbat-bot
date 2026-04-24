@@ -52,12 +52,18 @@ async function askGemini({ subjectKey, question }) {
   if (!q) throw new Error('question is required');
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({
-    model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
-    systemInstruction: buildSystemPrompt(subjectKey),
-  });
+  const modelName = String(process.env.GEMINI_MODEL || 'gemini-1.5-flash').trim();
+  const sys = buildSystemPrompt(subjectKey);
 
-  const result = await model.generateContent(q);
+  const isGemma = modelName.toLowerCase().startsWith('gemma-');
+  const model = genAI.getGenerativeModel(
+    isGemma
+      ? { model: modelName }
+      : { model: modelName, systemInstruction: sys }
+  );
+
+  const prompt = isGemma ? `${sys}\n\nسؤال الطالب:\n${q}` : q;
+  const result = await model.generateContent(prompt);
   const text = result?.response?.text?.() || '';
   return String(text || '').trim();
 }
