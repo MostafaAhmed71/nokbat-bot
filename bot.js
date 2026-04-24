@@ -139,16 +139,21 @@ function buildBot() {
     if (ctx.session.awaiting === 'ai_question') {
       const subjectKey = ctx.session?.ai?.subjectKey || 'other';
       const subjectName = subjectLabel(subjectKey);
-      ctx.session.awaiting = null;
+      // نبقي وضع الـ AI فعّال للأسئلة المتتابعة حتى يرجع المستخدم للقائمة
       try {
         const answer = await askGemini({ subjectKey, question: txt });
         const safe =
           answer ||
           'لم أستطع توليد إجابة الآن. جرّب إعادة صياغة السؤال أو اسأل بطريقة أبسط.';
-        await ctx.reply(`المادة: ${subjectName}\n\n${safe}`, aiAfterAnswerKeyboard());
+        ctx.session.awaiting = 'ai_question';
+        await ctx.reply(
+          `المادة: ${subjectName}\n\n${safe}\n\nاكتب سؤالك التالي مباشرة 👇`,
+          aiAfterAnswerKeyboard()
+        );
       } catch (e) {
         // eslint-disable-next-line no-console
         console.error('gemini error', e);
+        ctx.session.awaiting = 'ai_question';
         const msg =
           String(e?.message || '').includes('GEMINI_API_KEY')
             ? 'خدمة الذكاء الاصطناعي غير مفعلة حالياً. (GEMINI_API_KEY غير مضبوط)'
