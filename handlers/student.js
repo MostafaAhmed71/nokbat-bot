@@ -157,7 +157,18 @@ function quizAfterKeyboard() {
       Markup.button.callback('🔁 سؤال جديد', 'quiz:next'),
       Markup.button.callback('📌 تغيير المادة', 'quiz:change_subject'),
     ],
+    [Markup.button.callback('⚙️ إعدادات الاختبار', 'quiz:settings')],
     [Markup.button.callback('🏠 القائمة', 'quiz:home')],
+  ]);
+}
+
+function quizDifficultyKeyboard(current) {
+  const d = String(current || 'medium');
+  const opt = (id, label) =>
+    Markup.button.callback(`${d === id ? '✅ ' : ''}${label}`, `quiz:diff:${id}`);
+  return Markup.inlineKeyboard([
+    [opt('easy', 'سهل'), opt('medium', 'متوسط'), opt('hard', 'صعب')],
+    [Markup.button.callback('🏠 رجوع للقائمة', 'quiz:home')],
   ]);
 }
 
@@ -168,6 +179,7 @@ module.exports = {
   quizSubjectsKeyboard,
   quizAnswerKeyboard,
   quizAfterKeyboard,
+  quizDifficultyKeyboard,
   aiAfterAnswerKeyboard,
   helpKeyboard,
   settingsKeyboard,

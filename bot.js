@@ -18,6 +18,7 @@ const {
   quizSubjectsKeyboard,
   quizAnswerKeyboard,
   quizAfterKeyboard,
+  quizDifficultyKeyboard,
   aiAfterAnswerKeyboard,
   helpKeyboard,
   settingsKeyboard,
@@ -46,6 +47,10 @@ function buildBot() {
         quiz: {
           subjectKey: null,
           points: 0,
+          difficulty: 'medium',
+          streak: 0,
+          lastDayKey: null,
+          badges: [],
           current: null,
         },
       }),
@@ -140,7 +145,16 @@ function buildBot() {
     ctx.session.quiz.subjectKey = null;
     ctx.session.quiz.current = null;
     ctx.session.quiz.points = Number(ctx.session.quiz.points || 0);
-    return ctx.reply('🧪 اختر مادة للاختبار السريع:', quizSubjectsKeyboard());
+    ctx.session.quiz.difficulty = ctx.session.quiz.difficulty || 'medium';
+    ctx.session.quiz.streak = Number(ctx.session.quiz.streak || 0);
+    ctx.session.quiz.lastDayKey = ctx.session.quiz.lastDayKey || null;
+    ctx.session.quiz.badges = Array.isArray(ctx.session.quiz.badges)
+      ? ctx.session.quiz.badges
+      : [];
+    return ctx.reply(
+      `🧪 اختبار سريع\n\nاختر مادة للاختبار:`,
+      quizSubjectsKeyboard()
+    );
   });
 
   bot.hears('ℹ️ المساعدة', async (ctx) => {
@@ -481,12 +495,72 @@ function buildBot() {
     }
   }
 
+  function dayKeyNow() {
+    const d = new Date();
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  }
+
+  function dayKeyOffset(key, deltaDays) {
+    const [y, m, d] = String(key).split('-').map((x) => Number(x));
+    const dt = new Date(y, (m || 1) - 1, d || 1);
+    dt.setDate(dt.getDate() + Number(deltaDays || 0));
+    const yy = dt.getFullYear();
+    const mm = String(dt.getMonth() + 1).padStart(2, '0');
+    const dd = String(dt.getDate()).padStart(2, '0');
+    return `${yy}-${mm}-${dd}`;
+  }
+
+  function ensureQuizSession(ctx) {
+    ctx.session.quiz = ctx.session.quiz || {};
+    ctx.session.quiz.points = Number(ctx.session.quiz.points || 0);
+    ctx.session.quiz.difficulty = ctx.session.quiz.difficulty || 'medium';
+    ctx.session.quiz.streak = Number(ctx.session.quiz.streak || 0);
+    ctx.session.quiz.lastDayKey = ctx.session.quiz.lastDayKey || null;
+    ctx.session.quiz.badges = Array.isArray(ctx.session.quiz.badges)
+      ? ctx.session.quiz.badges
+      : [];
+    ctx.session.quiz.current = ctx.session.quiz.current || null;
+  }
+
+  function awardBadges(ctx) {
+    ensureQuizSession(ctx);
+    const b = new Set(ctx.session.quiz.badges);
+    const pts = Number(ctx.session.quiz.points || 0);
+    const streak = Number(ctx.session.quiz.streak || 0);
+
+    if (pts >= 5) b.add('🏅 مبتدئ (5 نقاط)');
+    if (pts >= 10) b.add('🥉 برونزي (10 نقاط)');
+    if (pts >= 20) b.add('🥈 فضي (20 نقطة)');
+    if (streak >= 3) b.add('🔥 سلسلة 3 أيام');
+    if (streak >= 7) b.add('💪 سلسلة 7 أيام');
+
+    ctx.session.quiz.badges = Array.from(b);
+  }
+
+  function difficultyLabel(d) {
+    if (d === 'easy') return 'سهل';
+    if (d === 'hard') return 'صعب';
+    return 'متوسط';
+  }
+
+  function difficultyHint(d) {
+    if (d === 'easy') return 'سهل: تعريفات مباشرة وأمثلة بسيطة.';
+    if (d === 'hard') return 'صعب: يحتاج تفكير وخطوة/خطوتين.';
+    return 'متوسط: مناسب للمراجعة اليومية.';
+  }
+
   async function generateQuiz(ctx) {
-    const subjectKey = ctx.session?.quiz?.subjectKey || 'other';
+    ensureQuizSession(ctx);
+    const subjectKey = ctx.session.quiz.subjectKey || 'other';
     const subjectName = subjectLabel(subjectKey);
+    const difficulty = ctx.session.quiz.difficulty || 'medium';
     const prompt = [
       'اكتب سؤال اختيار من متعدد للطالب باللغة العربية.',
       `المادة: ${subjectName}.`,
+      `الصعوبة: ${difficultyLabel(difficulty)} (${difficultyHint(difficulty)})`,
       'المطلوب: JSON فقط بدون أي شرح أو نص إضافي.',
       'الشكل المطلوب:',
       '{"question":"...","options":["A","B","C","D"],"correctIndex":0,"explanation":"شرح مختصر"}',
@@ -514,10 +588,14 @@ function buildBot() {
       throw new Error('quiz_invalid_payload');
     }
 
-    ctx.session.quiz = ctx.session.quiz || {};
     ctx.session.quiz.current = { question: q, options, correctIndex, explanation };
+    const pts = Number(ctx.session.quiz.points || 0);
+    const streak = Number(ctx.session.quiz.streak || 0);
+    const badgeCount = Array.isArray(ctx.session.quiz.badges)
+      ? ctx.session.quiz.badges.length
+      : 0;
     return ctx.reply(
-      `🧪 اختبار سريع — ${subjectName}\n\n${q}\n\n🏅 نقاطك: ${Number(ctx.session.quiz.points || 0)}`,
+      `🧪 اختبار سريع — ${subjectName}\nالصعوبة: ${difficultyLabel(difficulty)}\n\n${q}\n\n🏅 نقاطك: ${pts} | 🔥 السلسلة: ${streak} | 🎖️ الشارات: ${badgeCount}`,
       quizAnswerKeyboard(options)
     );
   }
@@ -536,6 +614,28 @@ function buildBot() {
     ctx.session.quiz.subjectKey = null;
     ctx.session.quiz.current = null;
     return ctx.reply('📌 اختر مادة للاختبار:', quizSubjectsKeyboard());
+  });
+
+  bot.action('quiz:settings', async (ctx) => {
+    await ctx.answerCbQuery();
+    ensureQuizSession(ctx);
+    return ctx.reply(
+      `⚙️ إعدادات الاختبار\n\nاختر الصعوبة الحالية: ${difficultyLabel(
+        ctx.session.quiz.difficulty
+      )}`,
+      quizDifficultyKeyboard(ctx.session.quiz.difficulty)
+    );
+  });
+
+  bot.action(/^quiz:diff:(easy|medium|hard)$/, async (ctx) => {
+    const d = ctx.match[1];
+    await ctx.answerCbQuery('تم');
+    ensureQuizSession(ctx);
+    ctx.session.quiz.difficulty = d;
+    return ctx.reply(
+      `✅ تم ضبط الصعوبة على: ${difficultyLabel(d)}\n\nاضغط «🔁 سؤال جديد» لبدء سؤال بهذه الصعوبة.`,
+      quizAfterKeyboard()
+    );
   });
 
   bot.action('quiz:next', async (ctx) => {
@@ -578,14 +678,31 @@ function buildBot() {
     }
     const correct = Number(cur.correctIndex);
     const ok = pick === correct;
+    ensureQuizSession(ctx);
     ctx.session.quiz.points = Number(ctx.session.quiz.points || 0) + (ok ? 1 : 0);
+
+    // تحديث السلسلة مرة واحدة لكل يوم عند حل أول سؤال
+    const today = dayKeyNow();
+    const last = ctx.session.quiz.lastDayKey;
+    if (last !== today) {
+      if (last && dayKeyOffset(last, 1) === today) {
+        ctx.session.quiz.streak = Number(ctx.session.quiz.streak || 0) + 1;
+      } else {
+        ctx.session.quiz.streak = 1;
+      }
+      ctx.session.quiz.lastDayKey = today;
+    }
+    awardBadges(ctx);
+
     const chosen = cur.options?.[pick] ?? '';
     const right = cur.options?.[correct] ?? '';
     const header = ok ? '✅ إجابة صحيحة!' : '❌ إجابة غير صحيحة';
     const explain = cur.explanation ? `\n\n📌 الشرح:\n${cur.explanation}` : '';
     ctx.session.quiz.current = null;
+    const badges = Array.isArray(ctx.session.quiz.badges) ? ctx.session.quiz.badges : [];
+    const badgesLine = badges.length ? `\n🎖️ شاراتك: ${badges.slice(-3).join(' — ')}` : '';
     return ctx.reply(
-      `${header}\n\nاختيارك: ${chosen}\nالإجابة الصحيحة: ${right}\n\n🏅 نقاطك: ${ctx.session.quiz.points}${explain}`,
+      `${header}\n\nاختيارك: ${chosen}\nالإجابة الصحيحة: ${right}\n\n🏅 نقاطك: ${ctx.session.quiz.points} | 🔥 السلسلة: ${ctx.session.quiz.streak}${badgesLine}${explain}`,
       quizAfterKeyboard()
     );
   });
