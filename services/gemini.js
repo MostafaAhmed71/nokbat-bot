@@ -70,7 +70,27 @@ function formatHistory(history) {
   return lines.join('\n');
 }
 
-async function askGemini({ subjectKey, question, history, style }) {
+function formatSources(retrievedChunks) {
+  const rows = Array.isArray(retrievedChunks) ? retrievedChunks : [];
+  const cleaned = rows
+    .map((r) => ({
+      title: String(r.title || '').trim() || 'مصدر',
+      chunk_order: Number(r.chunk_order ?? r.chunkOrder ?? 0) || 0,
+      chunk_text: String(r.chunk_text || r.text || '').trim(),
+    }))
+    .filter((r) => r.chunk_text);
+
+  if (!cleaned.length) return '';
+  const lines = ['مصادر للمذاكرة (استخدمها فقط في الإجابة):'];
+  cleaned.slice(0, 6).forEach((r, idx) => {
+    lines.push(`[#${idx + 1}] ${r.title} (جزء ${r.chunk_order + 1})`);
+    lines.push(r.chunk_text);
+    lines.push('');
+  });
+  return lines.join('\n').trim();
+}
+
+async function askGemini({ subjectKey, question, history, style, retrievedChunks }) {
   const apiKey = requireEnv('GEMINI_API_KEY');
   const q = String(question || '').trim();
   if (!q) throw new Error('question is required');
@@ -79,6 +99,7 @@ async function askGemini({ subjectKey, question, history, style }) {
   const modelName = String(process.env.GEMINI_MODEL || 'gemini-1.5-flash').trim();
   const sys = buildSystemPrompt(subjectKey, style);
   const hist = formatHistory(history);
+  const sources = formatSources(retrievedChunks);
 
   const isGemma = modelName.toLowerCase().startsWith('gemma-');
   const model = genAI.getGenerativeModel(
@@ -87,7 +108,20 @@ async function askGemini({ subjectKey, question, history, style }) {
       : { model: modelName, systemInstruction: sys }
   );
 
-  const userPrompt = hist ? `${hist}\n\nسؤال الطالب:\n${q}` : `سؤال الطالب:\n${q}`;
+  const parts = [];
+  if (hist) parts.push(hist);
+  if (sources) {
+    parts.push(
+      sources,
+      'تعليمات مهمة:',
+      '- أجب بالعربية فقط.',
+      '- اجعل الإجابة مستندة إلى المصادر أعلاه قدر الإمكان.',
+      '- ضع رقم المصدر بجانب كل معلومة مهمة مثل: [#1] أو [#2].',
+      '- إذا لم تجد في المصادر ما يكفي، قل ذلك واقترح ما يلزم إضافته من مراجعة/منهج.'
+    );
+  }
+  parts.push(`سؤال الطالب:\n${q}`);
+  const userPrompt = parts.join('\n\n');
   const prompt = isGemma ? `${sys}\n\n${userPrompt}` : userPrompt;
   const result = await model.generateContent(prompt);
   const text = result?.response?.text?.() || '';

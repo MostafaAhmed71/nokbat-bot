@@ -12,6 +12,7 @@ function teacherMainKeyboard() {
       Markup.button.text('📅 جدولي اليوم'),
       Markup.button.text('🔎 بحث طالب (لجنة)'),
     ],
+    [Markup.button.text('📤 رفع مراجعة')],
     [Markup.button.text('🏠 القائمة الرئيسية')],
   ]).resize();
 }

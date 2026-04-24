@@ -19,7 +19,10 @@
     "csv-parse": "^5.6.0",
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
+    "mammoth": "^1.12.0",
+    "minisearch": "^7.2.0",
     "multer": "^2.0.2",
+    "pdf-parse": "^2.4.5",
     "telegraf": "^4.16.3",
     "xlsx": "^0.18.5"
   }

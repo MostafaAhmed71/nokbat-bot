@@ -8,8 +8,7 @@ alter table public.students
   add column if not exists result_updated_at timestamptz;
 
 -- منع تكرار رقم الهوية (يسهّل upsert عند الاستيراد)
--- ملاحظة: لو عندك طلاب بدون رقم هوية، يظل مسموحاً (NULL).
+-- ملاحظة: UNIQUE يسمح بتعدد NULL تلقائياً.
 create unique index if not exists students_national_id_unique
-  on public.students (national_id)
-  where national_id is not null and national_id <> '';
+  on public.students (national_id);
 

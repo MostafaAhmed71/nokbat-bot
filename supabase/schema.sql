@@ -46,5 +46,32 @@ create table if not exists public.results (
 create index if not exists idx_schedule_teacher_day on public.schedule (teacher_id, day);
 
 create unique index if not exists students_national_id_unique
-  on public.students (national_id)
-  where national_id is not null and national_id <> '';
+  on public.students (national_id);
+
+-- مكتبة المنهج والمراجعات
+create table if not exists public.content_items (
+  id uuid primary key default uuid_generate_v4(),
+  kind text not null default 'review', -- review | curriculum | other
+  grade text not null,
+  subject_key text not null,
+  title text not null,
+  file_path text not null,
+  mime text,
+  source text not null default 'web', -- web | telegram
+  uploaded_by_telegram_id text,
+  created_at timestamptz default now()
+);
+
+create table if not exists public.content_chunks (
+  id uuid primary key default uuid_generate_v4(),
+  item_id uuid references public.content_items (id) on delete cascade,
+  chunk_order int not null,
+  chunk_text text not null,
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_content_items_grade_subject
+  on public.content_items (grade, subject_key);
+
+create index if not exists idx_content_chunks_item_order
+  on public.content_chunks (item_id, chunk_order);

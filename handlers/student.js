@@ -172,6 +172,15 @@ function quizDifficultyKeyboard(current) {
   ]);
 }
 
+function gradesKeyboard(prefix = 'grade:set') {
+  const mk = (key, label) => Markup.button.callback(label, `${prefix}:${key}`);
+  return Markup.inlineKeyboard([
+    [mk('m1', 'أول متوسط'), mk('m2', 'ثاني متوسط'), mk('m3', 'ثالث متوسط')],
+    [mk('s1', 'أول ثانوي'), mk('s2', 'ثاني ثانوي'), mk('s3', 'ثالث ثانوي')],
+    [Markup.button.callback('🏠 رجوع للقائمة', 'help:home')],
+  ]);
+}
+
 module.exports = {
   formatStudentCommittee,
   studentMainKeyboard,
@@ -182,6 +191,7 @@ module.exports = {
   quizDifficultyKeyboard,
   aiAfterAnswerKeyboard,
   helpKeyboard,
+  gradesKeyboard,
   settingsKeyboard,
   studentPickKeyboard,
 };

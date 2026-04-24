@@ -21,11 +21,15 @@ const {
   quizDifficultyKeyboard,
   aiAfterAnswerKeyboard,
   helpKeyboard,
+  gradesKeyboard,
   settingsKeyboard,
   studentPickKeyboard,
 } = require('./handlers/student');
 const { promptForNationalId, handleNationalIdText } = require('./handlers/results');
 const { askGemini, subjectLabel } = require('./services/gemini');
+const { ingestFile, searchLibrary } = require('./services/contentLibrary');
+const fs = require('fs');
+const path = require('path');
 
 function buildBot() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -44,6 +48,9 @@ function buildBot() {
           lastAnswer: null,
           style: 'medium',
         },
+        student: {
+          gradeKey: null,
+        },
         quiz: {
           subjectKey: null,
           points: 0,
@@ -53,6 +60,7 @@ function buildBot() {
           badges: [],
           current: null,
         },
+        upload: null,
       }),
     })
   );
@@ -128,6 +136,11 @@ function buildBot() {
     if (isAdmin(ctx)) return ctx.reply('هذا الخيار مخصص للطلاب.');
     const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
     if (teacher) return ctx.reply('هذا الخيار مخصص للطلاب.');
+    ctx.session.student = ctx.session.student || {};
+    if (!ctx.session.student.gradeKey) {
+      ctx.session.awaiting = 'student_pick_grade';
+      return ctx.reply('اختر صفّك الدراسي أولاً:', gradesKeyboard('grade:set'));
+    }
     ctx.session.awaiting = 'ai_pick_subject';
     ctx.session.ai = ctx.session.ai || {};
     ctx.session.ai.subjectKey = null;
@@ -179,7 +192,10 @@ function buildBot() {
     const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
     if (teacher) return ctx.reply('الإعدادات متاحة للطلاب فقط حالياً.');
     const style = ctx.session?.ai?.style || 'medium';
-    return ctx.reply('⚙️ الإعدادات — اختر أسلوب الشرح:', settingsKeyboard(style));
+    const gradeKey = ctx.session?.student?.gradeKey || null;
+    const gradeLine = gradeKey ? `\n\n✅ صفّك الحالي: ${gradeKey}` : '\n\nلم يتم تحديد الصف بعد.';
+    await ctx.reply('⚙️ الإعدادات — أسلوب الشرح:', settingsKeyboard(style));
+    return ctx.reply(`⚙️ الإعدادات — الصف الدراسي:${gradeLine}`, gradesKeyboard('grade:set'));
   });
 
   bot.hears('🏠 القائمة الرئيسية', async (ctx) => {
@@ -244,16 +260,36 @@ function buildBot() {
       const subjectKey = ctx.session?.ai?.subjectKey || 'other';
       const subjectName = subjectLabel(subjectKey);
       const style = ctx.session?.ai?.style || 'medium';
+      const gradeKey = ctx.session?.student?.gradeKey;
       // نبقي وضع الـ AI فعّال للأسئلة المتتابعة حتى يرجع المستخدم للقائمة
       try {
         const history = Array.isArray(ctx.session?.ai?.history)
           ? ctx.session.ai.history
           : [];
+        const gradeMap = {
+          m1: 'أول متوسط',
+          m2: 'ثاني متوسط',
+          m3: 'ثالث متوسط',
+          s1: 'أول ثانوي',
+          s2: 'ثاني ثانوي',
+          s3: 'ثالث ثانوي',
+        };
+        const grade = gradeMap[String(gradeKey || '')] || null;
+        const retrievedChunks =
+          grade && subjectKey
+            ? await searchLibrary({
+                grade,
+                subjectKey,
+                query: txt,
+                topK: 5,
+              })
+            : [];
         const answer = await askGemini({
           subjectKey,
           question: txt,
           history,
           style,
+          retrievedChunks,
         });
         const safe =
           answer ||
@@ -297,6 +333,172 @@ function buildBot() {
       'وجدنا أكثر من تطابق. اختر اسمك من القائمة:',
       studentPickKeyboard(data)
     );
+  });
+
+  bot.action(/^grade:set:(m1|m2|m3|s1|s2|s3)$/, async (ctx) => {
+    const g = ctx.match[1];
+    await ctx.answerCbQuery('تم');
+    ctx.session.student = ctx.session.student || {};
+    ctx.session.student.gradeKey = g;
+    if (ctx.session.awaiting === 'student_pick_grade') {
+      ctx.session.awaiting = 'ai_pick_subject';
+      return ctx.reply('✅ تم تحديد الصف. الآن اختر المادة:', aiSubjectsKeyboard());
+    }
+    return ctx.reply('✅ تم تحديث الصف.', studentMainKeyboard());
+  });
+
+  function getFilesRoot() {
+    return process.env.FILES_ROOT || path.join(__dirname, 'files');
+  }
+
+  function ensureDir(p) {
+    fs.mkdirSync(p, { recursive: true });
+  }
+
+  function sanitizeSegment(s) {
+    return String(s || '')
+      .trim()
+      .replace(/[\\/:*?"<>|]+/g, '_')
+      .replace(/\s+/g, ' ')
+      .slice(0, 80);
+  }
+
+  function gradeLabelFromKey(k) {
+    const map = {
+      m1: 'أول متوسط',
+      m2: 'ثاني متوسط',
+      m3: 'ثالث متوسط',
+      s1: 'أول ثانوي',
+      s2: 'ثاني ثانوي',
+      s3: 'ثالث ثانوي',
+    };
+    return map[String(k || '')] || null;
+  }
+
+  function teacherUploadSubjectsKeyboard() {
+    // نفس subject_key المستخدمة في AI
+    const rows = [
+      [
+        { t: '📐 رياضيات', k: 'math' },
+        { t: '🔬 علوم', k: 'science' },
+      ],
+      [
+        { t: '📖 لغتي', k: 'arabic' },
+        { t: '📚 إنجليزي', k: 'english' },
+      ],
+      [
+        { t: '🕌 إسلاميات', k: 'islamic' },
+        { t: '📜 اجتماعيات', k: 'social' },
+      ],
+      [
+        { t: 'فيزياء', k: 'physics' },
+        { t: 'كمياء', k: 'chemistry' },
+        { t: 'إحياء', k: 'biology' },
+      ],
+      [
+        { t: 'قدرات لفظي', k: 'qudrat_verbal' },
+        { t: 'قدرات كمي', k: 'qudrat_quant' },
+      ],
+      [{ t: 'التحصيلي', k: 'tahsili' }],
+      [{ t: '🎯 أخرى', k: 'other' }],
+    ].map((row) =>
+      row.map((x) => require('telegraf').Markup.button.callback(x.t, `tch:sub:${x.k}`))
+    );
+    rows.push([require('telegraf').Markup.button.callback('🏠 إلغاء', 'tch:cancel')]);
+    return require('telegraf').Markup.inlineKeyboard(rows);
+  }
+
+  bot.hears('📤 رفع مراجعة', async (ctx) => {
+    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
+    if (!teacher) return;
+    ctx.session.upload = { kind: 'review', gradeKey: null, subjectKey: null };
+    ctx.session.awaiting = 'tch_upload_pick_grade';
+    return ctx.reply('اختر الصف لهذه المراجعة:', gradesKeyboard('tch:grade'));
+  });
+
+  bot.action(/^tch:grade:(m1|m2|m3|s1|s2|s3)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    ctx.session.upload = ctx.session.upload || { kind: 'review' };
+    ctx.session.upload.gradeKey = ctx.match[1];
+    ctx.session.awaiting = 'tch_upload_pick_subject';
+    return ctx.reply('اختر المادة:', teacherUploadSubjectsKeyboard());
+  });
+
+  bot.action(/^tch:sub:([a-z_]+)$/, async (ctx) => {
+    await ctx.answerCbQuery();
+    ctx.session.upload = ctx.session.upload || { kind: 'review' };
+    ctx.session.upload.subjectKey = ctx.match[1];
+    ctx.session.awaiting = 'tch_upload_file';
+    return ctx.reply('أرسل ملف المراجعة الآن (PDF أو DOCX أو TXT).');
+  });
+
+  bot.action('tch:cancel', async (ctx) => {
+    await ctx.answerCbQuery();
+    ctx.session.awaiting = null;
+    ctx.session.upload = null;
+    return ctx.reply('تم الإلغاء.', teacherMainKeyboard());
+  });
+
+  bot.on('document', async (ctx) => {
+    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
+    if (!teacher) return;
+    if (ctx.session.awaiting !== 'tch_upload_file') return;
+
+    const doc = ctx.message.document;
+    const fileId = doc.file_id;
+    const mime = doc.mime_type || '';
+    const name = doc.file_name || 'file';
+    const ext = String(path.extname(name) || '').toLowerCase();
+    if (!['.pdf', '.docx', '.txt'].includes(ext)) {
+      return ctx.reply('صيغة غير مدعومة. أرسل PDF أو DOCX أو TXT.');
+    }
+
+    const grade = gradeLabelFromKey(ctx.session?.upload?.gradeKey);
+    const subjectKey = String(ctx.session?.upload?.subjectKey || '').trim();
+    if (!grade || !subjectKey) {
+      return ctx.reply('ابدأ من جديد: 📤 رفع مراجعة ثم اختر الصف والمادة.');
+    }
+
+    const filesRoot = getFilesRoot();
+    const libDir = path.join(
+      filesRoot,
+      'library',
+      sanitizeSegment(grade),
+      sanitizeSegment(subjectKey)
+    );
+    ensureDir(libDir);
+    const base = sanitizeSegment(path.basename(name, ext) || 'review');
+    const outPath = path.join(libDir, `${base}-${Date.now()}${ext}`);
+
+    try {
+      const link = await ctx.telegram.getFileLink(fileId);
+      const res = await fetch(String(link));
+      if (!res.ok) throw new Error(`download failed: ${res.status}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      fs.writeFileSync(outPath, buf);
+
+      const ing = await ingestFile({
+        kind: 'review',
+        grade,
+        subjectKey,
+        title: base,
+        filePath: outPath,
+        mime,
+        source: 'telegram',
+        uploadedByTelegramId: String(ctx.from.id),
+      });
+
+      ctx.session.awaiting = null;
+      ctx.session.upload = null;
+      return ctx.reply(
+        `تم رفع المراجعة وفهرستها.\n\nالعنوان: ${ing.title}\nعدد الأجزاء: ${ing.chunksCount}`,
+        teacherMainKeyboard()
+      );
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('teacher upload error', e);
+      return ctx.reply('تعذر رفع/فهرسة الملف. حاول مرة أخرى.');
+    }
   });
 
   bot.action(/^pick:stu:([0-9a-f-]{36})$/i, async (ctx) => {

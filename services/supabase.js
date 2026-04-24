@@ -182,6 +182,48 @@ async function searchTeachersByName(nameQuery) {
   return { data: data || [], error };
 }
 
+async function createContentItem(payload) {
+  const client = requireClient();
+  const { data, error } = await client
+    .from('content_items')
+    .insert([payload])
+    .select('*')
+    .maybeSingle();
+  return { data, error };
+}
+
+async function insertContentChunks(itemId, chunks) {
+  const client = requireClient();
+  const rows = (chunks || []).map((c) => ({
+    item_id: itemId,
+    chunk_order: c.chunk_order,
+    chunk_text: c.chunk_text,
+  }));
+  if (!rows.length) return { data: [], error: null };
+  const { data, error } = await client.from('content_chunks').insert(rows).select('id');
+  return { data: data || [], error };
+}
+
+async function listContentChunksForGradeSubject(grade, subjectKey) {
+  const client = requireClient();
+  const { data, error } = await client
+    .from('content_chunks')
+    .select('id, item_id, chunk_order, chunk_text, content_items!inner(title, grade, subject_key)')
+    .eq('content_items.grade', grade)
+    .eq('content_items.subject_key', subjectKey)
+    .order('item_id', { ascending: true })
+    .order('chunk_order', { ascending: true });
+
+  const rows = (data || []).map((r) => ({
+    id: r.id,
+    item_id: r.item_id,
+    chunk_order: r.chunk_order,
+    chunk_text: r.chunk_text,
+    title: r.content_items?.title || '',
+  }));
+  return { data: rows, error };
+}
+
 module.exports = {
   supabase,
   searchStudentsByName,
@@ -194,4 +236,7 @@ module.exports = {
   getScheduleForTeacherOnDay,
   getFullScheduleForTeacher,
   searchTeachersByName,
+  createContentItem,
+  insertContentChunks,
+  listContentChunksForGradeSubject,
 };

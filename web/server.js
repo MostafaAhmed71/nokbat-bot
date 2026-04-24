@@ -10,6 +10,7 @@ const {
   supabase,
   setStudentResultImageUrlByNationalId,
 } = require('../services/supabase');
+const { ingestFile } = require('../services/contentLibrary');
 const { normalizeNationalId } = require('../utils/nationalId');
 
 function requireEnv(name) {
@@ -62,6 +63,14 @@ function htmlPage(title, body) {
 
 function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
+}
+
+function sanitizeSegment(s) {
+  return String(s || '')
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, '_')
+    .replace(/\s+/g, ' ')
+    .slice(0, 80);
 }
 
 function escapeHtml(s) {
@@ -118,7 +127,10 @@ async function upsertStudents(rows) {
   const payload = rows
     .map((r) => ({
       name: String(r.name || r.الاسم || '').trim(),
-      national_id: normalizeNationalId(r.national_id || r.nationalid || r.الهوية || r.رقم_الهوية),
+      national_id:
+        normalizeNationalId(
+          r.national_id || r.nationalid || r.الهوية || r.رقم_الهوية
+        ) || null,
       grade: String(r.grade || r.الصف || '').trim() || null,
       class: String(r.class || r.الفصل || '').trim() || null,
       committee_number:
@@ -208,6 +220,8 @@ function main() {
     <a href="/admin/results">رفع صور النتائج</a>
     <span class="muted">|</span>
     <a href="/admin/manual">إدخال يدوي</a>
+    <span class="muted">|</span>
+    <a href="/admin/library">مكتبة المنهج والمراجعات</a>
   </div>
 </div>
 <div class="card">
@@ -215,6 +229,91 @@ function main() {
 </div>`
       )
     );
+  });
+
+  app.get('/admin/library', basicAuth, (req, res) => {
+    res.send(
+      htmlPage(
+        'مكتبة المنهج والمراجعات',
+        `<h2>مكتبة المنهج والمراجعات</h2>
+<div class="card">
+  <form method="post" action="/admin/library" enctype="multipart/form-data">
+    <div class="row">
+      <select name="kind" required>
+        <option value="review">مراجعة</option>
+        <option value="curriculum">منهج</option>
+        <option value="other">أخرى</option>
+      </select>
+      <input name="grade" placeholder="الصف (مثال: ثاني متوسط)" required />
+      <input name="subject_key" placeholder="subject_key (مثال: math)" required />
+    </div>
+    <div class="row" style="margin-top:12px">
+      <input name="title" placeholder="عنوان الملف (اختياري)" />
+      <input type="file" name="file" accept=".pdf,.docx,.txt" required />
+      <button type="submit">رفع وفهرسة</button>
+    </div>
+    <p class="muted">ملاحظة: يتم حفظ الملف على السيرفر داخل <code>FILES_ROOT/library</code> ثم استخراج النص وتجزيئه للبحث.</p>
+  </form>
+</div>
+<div class="card"><a href="/admin">رجوع</a></div>`
+      )
+    );
+  });
+
+  app.post('/admin/library', basicAuth, uploadTmp.single('file'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).send('file is required');
+      const kind = String(req.body.kind || 'review').trim() || 'review';
+      const grade = String(req.body.grade || '').trim();
+      const subjectKey = String(req.body.subject_key || '').trim();
+      const title = String(req.body.title || '').trim() || null;
+      if (!grade || !subjectKey) return res.status(400).send('grade & subject_key required');
+
+      const libDir = path.join(
+        filesRoot,
+        'library',
+        sanitizeSegment(grade),
+        sanitizeSegment(subjectKey)
+      );
+      ensureDir(libDir);
+
+      const original = String(req.file.originalname || 'file').trim();
+      const ext = (path.extname(original) || '').toLowerCase() || '';
+      const base = sanitizeSegment(path.basename(original, ext) || 'file');
+      const outName = `${base}-${Date.now()}${ext}`;
+      const outPath = path.join(libDir, outName);
+      fs.renameSync(req.file.path, outPath);
+
+      const ing = await ingestFile({
+        kind,
+        grade,
+        subjectKey,
+        title,
+        filePath: outPath,
+        mime: req.file.mimetype,
+        source: 'web',
+        uploadedByTelegramId: null,
+      });
+
+      return res.send(
+        htmlPage(
+          'تم',
+          `<h2>تم الرفع والفهرسة</h2>
+<div class="card">
+  <div>العنوان: <b>${escapeHtml(ing.title)}</b></div>
+  <div>عدد الأجزاء: <b>${ing.chunksCount}</b></div>
+  <div class="muted">تم حفظ الملف داخل: <code>${escapeHtml(outPath)}</code></div>
+</div>
+<div class="card"><a href="/admin/library">رفع ملف آخر</a></div>`
+        )
+      );
+    } catch (e) {
+      return res.status(500).send(String(e.message || e));
+    } finally {
+      if (req.file?.path && fs.existsSync(req.file.path)) {
+        fs.rm(req.file.path, { force: true }, () => {});
+      }
+    }
   });
 
   app.get('/admin/manual', basicAuth, (req, res) => {
