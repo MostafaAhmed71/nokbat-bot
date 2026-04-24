@@ -21,8 +21,9 @@ const { Markup } = require('telegraf');
 
 function studentMainKeyboard() {
   return Markup.keyboard([
-    [Markup.button.text('اسأل AI 🤖')],
-    [Markup.button.text('معرفة اللجنة'), Markup.button.text('النتيجة')],
+    [Markup.button.text('🤖 اسأل مساعد AI')],
+    [Markup.button.text('🧾 لجنّتي'), Markup.button.text('🏁 نتيجتي')],
+    [Markup.button.text('🏠 القائمة الرئيسية')],
   ]).resize();
 }
 

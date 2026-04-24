@@ -54,7 +54,7 @@ function buildBot() {
   bot.start(async (ctx) => {
     if (isAdmin(ctx)) {
       return ctx.reply(
-        'أهلاً أيها المدير.\n\nاستخدم /admin لفتح لوحة التحكم، ومنها يمكنك البحث باسم أي طالب لمعرفة لجنته (الرقم والمكان).'
+        'مرحباً بك في لوحة المدير.\n\nاستخدم /admin لفتح لوحة التحكم.'
       );
     }
 
@@ -62,42 +62,57 @@ function buildBot() {
     if (teacher) {
       ctx.session.awaiting = null;
       return ctx.reply(
-        `أهلاً ${teacher.name}.\n\nيمكنك عرض جدولك لهذا اليوم، أو البحث باسم أي طالب لمعرفة صفّه وفصله ورقم ومكان لجنته.`,
+        `مرحباً ${teacher.name}.\n\nاختر من القائمة:`,
         teacherMainKeyboard()
       );
     }
 
     return ctx.reply(
-      'أهلاً بك في بوت متوسطة وثانوية نخبة الشمال الأهلية.\n\nاختر من القائمة:',
+      'مرحباً بك في بوت متوسطة وثانوية نخبة الشمال الأهلية.\n\nاختر خدمة من القائمة:',
       studentMainKeyboard()
     );
   });
 
-  bot.hears('معرفة اللجنة', async (ctx) => {
+  bot.hears(['🧾 لجنّتي', 'معرفة اللجنة'], async (ctx) => {
     if (isAdmin(ctx)) return ctx.reply('هذا الخيار مخصص للطلاب.');
     const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
     if (teacher) return ctx.reply('هذا الخيار مخصص للطلاب.');
     ctx.session.awaiting = 'student_committee';
-    return ctx.reply('اكتب اسمك الكامل لمعرفة رقم ومكان لجنتك.', {
+    return ctx.reply('🧾 اكتب اسمك الكامل وسأعرض رقم ومكان لجنتك.', {
       reply_markup: { remove_keyboard: true },
     });
   });
 
-  bot.hears('النتيجة', async (ctx) => {
+  bot.hears(['🏁 نتيجتي', 'النتيجة'], async (ctx) => {
     if (isAdmin(ctx)) return ctx.reply('هذا الخيار مخصص للطلاب.');
     const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
     if (teacher) return ctx.reply('هذا الخيار مخصص للطلاب.');
     return promptForNationalId(ctx);
   });
 
-  bot.hears('اسأل AI 🤖', async (ctx) => {
+  bot.hears(['🤖 اسأل مساعد AI', 'اسأل AI 🤖'], async (ctx) => {
     if (isAdmin(ctx)) return ctx.reply('هذا الخيار مخصص للطلاب.');
     const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
     if (teacher) return ctx.reply('هذا الخيار مخصص للطلاب.');
     ctx.session.awaiting = 'ai_pick_subject';
     ctx.session.ai = ctx.session.ai || {};
     ctx.session.ai.subjectKey = null;
-    return ctx.reply('اختر المادة التي تريد السؤال عنها:', aiSubjectsKeyboard());
+    return ctx.reply('🤖 اختر المادة التي تريد السؤال عنها:', aiSubjectsKeyboard());
+  });
+
+  bot.hears('🏠 القائمة الرئيسية', async (ctx) => {
+    if (isAdmin(ctx)) {
+      return ctx.reply('استخدم /admin لفتح لوحة تحكم المدير.');
+    }
+    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
+    if (teacher) {
+      ctx.session.awaiting = null;
+      return ctx.reply('اختر من القائمة:', teacherMainKeyboard());
+    }
+    ctx.session.awaiting = null;
+    ctx.session.ai = ctx.session.ai || {};
+    ctx.session.ai.subjectKey = null;
+    return ctx.reply('اختر خدمة من القائمة:', studentMainKeyboard());
   });
 
   bot.command(['result', 'نتيجتي'], async (ctx) => {

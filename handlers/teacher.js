@@ -9,9 +9,10 @@ const { formatStudentCommittee, studentPickKeyboard } = require('./student');
 function teacherMainKeyboard() {
   return Markup.keyboard([
     [
-      Markup.button.text('جدولي اليوم'),
-      Markup.button.text('بحث طالب (لجنة)'),
+      Markup.button.text('📅 جدولي اليوم'),
+      Markup.button.text('🔎 بحث طالب (لجنة)'),
     ],
+    [Markup.button.text('🏠 القائمة الرئيسية')],
   ]).resize();
 }
 
@@ -34,16 +35,24 @@ async function sendTodaySchedule(ctx, teacher) {
 
 async function handleTeacherText(ctx, teacher) {
   const t = (ctx.message.text || '').trim();
-  if (t === 'جدولي اليوم') {
+  if (t === '📅 جدولي اليوم' || t === 'جدولي اليوم') {
     ctx.session.awaiting = null;
     return sendTodaySchedule(ctx, teacher);
   }
-  if (t === 'بحث طالب (لجنة)' || t === 'البحث عن طالب') {
+  if (
+    t === '🔎 بحث طالب (لجنة)' ||
+    t === 'بحث طالب (لجنة)' ||
+    t === 'البحث عن طالب'
+  ) {
     ctx.session.awaiting = 'teacher_student';
     return ctx.reply(
       'اكتب اسم الطالب (أو جزءاً منه) لعرض الصف والفصل ورقم اللجنة ومكانها.',
       Markup.removeKeyboard()
     );
+  }
+  if (t === '🏠 القائمة الرئيسية') {
+    ctx.session.awaiting = null;
+    return ctx.reply('تم.', teacherMainKeyboard());
   }
   if (ctx.session.awaiting === 'teacher_student') {
     const { data, error } = await searchStudentsByName(t);
