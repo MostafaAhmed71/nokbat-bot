@@ -13,9 +13,13 @@ const {
 const { teacherMainKeyboard, handleTeacherText } = require('./handlers/teacher');
 const {
   formatStudentCommittee,
+  studentMainKeyboard,
+  aiSubjectsKeyboard,
+  aiAfterAnswerKeyboard,
   studentPickKeyboard,
 } = require('./handlers/student');
 const { promptForNationalId, handleNationalIdText } = require('./handlers/results');
+const { askGemini, subjectLabel } = require('./services/gemini');
 
 function buildBot() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -28,6 +32,9 @@ function buildBot() {
     session({
       defaultSession: () => ({
         awaiting: null,
+        ai: {
+          subjectKey: null,
+        },
       }),
     })
   );
@@ -60,10 +67,37 @@ function buildBot() {
       );
     }
 
-    ctx.session.awaiting = 'student_committee';
     return ctx.reply(
-      'أهلاً بك في بوت متوسطة وثانوية نخبة الشمال الأهلية.\n\n- لمعرفة اللجنة: اكتب اسمك الكامل\n- لمعرفة النتيجة: اكتب /result ثم رقم الهوية'
+      'أهلاً بك في بوت متوسطة وثانوية نخبة الشمال الأهلية.\n\nاختر من القائمة:',
+      studentMainKeyboard()
     );
+  });
+
+  bot.hears('معرفة اللجنة', async (ctx) => {
+    if (isAdmin(ctx)) return ctx.reply('هذا الخيار مخصص للطلاب.');
+    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
+    if (teacher) return ctx.reply('هذا الخيار مخصص للطلاب.');
+    ctx.session.awaiting = 'student_committee';
+    return ctx.reply('اكتب اسمك الكامل لمعرفة رقم ومكان لجنتك.', {
+      reply_markup: { remove_keyboard: true },
+    });
+  });
+
+  bot.hears('النتيجة', async (ctx) => {
+    if (isAdmin(ctx)) return ctx.reply('هذا الخيار مخصص للطلاب.');
+    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
+    if (teacher) return ctx.reply('هذا الخيار مخصص للطلاب.');
+    return promptForNationalId(ctx);
+  });
+
+  bot.hears('اسأل AI 🤖', async (ctx) => {
+    if (isAdmin(ctx)) return ctx.reply('هذا الخيار مخصص للطلاب.');
+    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
+    if (teacher) return ctx.reply('هذا الخيار مخصص للطلاب.');
+    ctx.session.awaiting = 'ai_pick_subject';
+    ctx.session.ai = ctx.session.ai || {};
+    ctx.session.ai.subjectKey = null;
+    return ctx.reply('اختر المادة التي تريد السؤال عنها:', aiSubjectsKeyboard());
   });
 
   bot.command(['result', 'نتيجتي'], async (ctx) => {
@@ -102,17 +136,41 @@ function buildBot() {
       return handleNationalIdText(ctx, txt);
     }
 
+    if (ctx.session.awaiting === 'ai_question') {
+      const subjectKey = ctx.session?.ai?.subjectKey || 'other';
+      const subjectName = subjectLabel(subjectKey);
+      ctx.session.awaiting = null;
+      try {
+        const answer = await askGemini({ subjectKey, question: txt });
+        const safe =
+          answer ||
+          'لم أستطع توليد إجابة الآن. جرّب إعادة صياغة السؤال أو اسأل بطريقة أبسط.';
+        await ctx.reply(`المادة: ${subjectName}\n\n${safe}`, aiAfterAnswerKeyboard());
+      } catch (e) {
+        // eslint-disable-next-line no-console
+        console.error('gemini error', e);
+        const msg =
+          String(e?.message || '').includes('GEMINI_API_KEY')
+            ? 'خدمة الذكاء الاصطناعي غير مفعلة حالياً. (GEMINI_API_KEY غير مضبوط)'
+            : 'تعذر الاتصال بمساعد الذكاء الاصطناعي حالياً. حاول لاحقاً.';
+        await ctx.reply(msg, aiAfterAnswerKeyboard());
+      }
+      return undefined;
+    }
+
     const { data, error } = await searchStudentsByName(txt);
     if (error) {
       return ctx.reply('تعذر البحث حالياً. حاول لاحقاً.');
     }
     if (!data.length) {
       return ctx.reply(
-        'لم يتم العثور على اسمك، تأكد من الاسم أو تواصل مع الإدارة.'
+        'لم يتم العثور على اسمك، تأكد من الاسم أو تواصل مع الإدارة.',
+        studentMainKeyboard()
       );
     }
     if (data.length === 1) {
-      return ctx.reply(formatStudentCommittee(data[0]));
+      ctx.session.awaiting = null;
+      return ctx.reply(formatStudentCommittee(data[0]), studentMainKeyboard());
     }
     return ctx.reply(
       'وجدنا أكثر من تطابق. اختر اسمك من القائمة:',
@@ -137,7 +195,38 @@ function buildBot() {
     if (isAdmin(ctx)) {
       return ctx.reply(msg, adminPanelKeyboard());
     }
-    return ctx.reply(msg);
+    return ctx.reply(msg, studentMainKeyboard());
+  });
+
+  bot.action('ai:home', async (ctx) => {
+    await ctx.answerCbQuery();
+    ctx.session.awaiting = null;
+    ctx.session.ai = ctx.session.ai || {};
+    ctx.session.ai.subjectKey = null;
+    return ctx.reply('اختر من القائمة:', studentMainKeyboard());
+  });
+
+  bot.action('ai:again', async (ctx) => {
+    await ctx.answerCbQuery();
+    if (!ctx.session?.ai?.subjectKey) {
+      ctx.session.awaiting = 'ai_pick_subject';
+      return ctx.reply('اختر المادة التي تريد السؤال عنها:', aiSubjectsKeyboard());
+    }
+    ctx.session.awaiting = 'ai_question';
+    return ctx.reply('اكتب سؤالك وهرد عليك فوراً 👇', {
+      reply_markup: { remove_keyboard: true },
+    });
+  });
+
+  bot.action(/^ai:sub:([a-z_]+)$/, async (ctx) => {
+    const key = ctx.match[1];
+    ctx.session.ai = ctx.session.ai || {};
+    ctx.session.ai.subjectKey = key;
+    ctx.session.awaiting = 'ai_question';
+    await ctx.answerCbQuery();
+    return ctx.reply('اكتب سؤالك وهرد عليك فوراً 👇', {
+      reply_markup: { remove_keyboard: true },
+    });
   });
 
   bot.catch((err, ctx) => {

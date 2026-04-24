@@ -19,6 +19,51 @@ function formatStudentCommittee(s, opts = {}) {
 
 const { Markup } = require('telegraf');
 
+function studentMainKeyboard() {
+  return Markup.keyboard([
+    [Markup.button.text('اسأل AI 🤖')],
+    [Markup.button.text('معرفة اللجنة'), Markup.button.text('النتيجة')],
+  ]).resize();
+}
+
+function aiSubjectsKeyboard() {
+  const rows = [
+    [
+      Markup.button.callback('📐 رياضيات', 'ai:sub:math'),
+      Markup.button.callback('🔬 علوم', 'ai:sub:science'),
+    ],
+    [
+      Markup.button.callback('📖 لغتي', 'ai:sub:arabic'),
+      Markup.button.callback('📚 إنجليزي', 'ai:sub:english'),
+    ],
+    [
+      Markup.button.callback('🕌 إسلاميات', 'ai:sub:islamic'),
+      Markup.button.callback('📜 اجتماعيات', 'ai:sub:social'),
+    ],
+    [
+      Markup.button.callback('فيزياء', 'ai:sub:physics'),
+      Markup.button.callback('كمياء', 'ai:sub:chemistry'),
+      Markup.button.callback('إحياء', 'ai:sub:biology'),
+    ],
+    [
+      Markup.button.callback('قدرات لفظي', 'ai:sub:qudrat_verbal'),
+      Markup.button.callback('قدرات كمي', 'ai:sub:qudrat_quant'),
+    ],
+    [Markup.button.callback('التحصيلي', 'ai:sub:tahsili')],
+    [Markup.button.callback('🎯 أخرى', 'ai:sub:other')],
+  ];
+
+  rows.push([Markup.button.callback('🏠 رجوع للقائمة', 'ai:home')]);
+  return Markup.inlineKeyboard(rows);
+}
+
+function aiAfterAnswerKeyboard() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback('اسأل سؤال تاني 🔄', 'ai:again')],
+    [Markup.button.callback('ارجع للقائمة 🏠', 'ai:home')],
+  ]);
+}
+
 function studentPickKeyboard(students) {
   const rows = students.map((s) => [
     Markup.button.callback(
@@ -31,5 +76,8 @@ function studentPickKeyboard(students) {
 
 module.exports = {
   formatStudentCommittee,
+  studentMainKeyboard,
+  aiSubjectsKeyboard,
+  aiAfterAnswerKeyboard,
   studentPickKeyboard,
 };
