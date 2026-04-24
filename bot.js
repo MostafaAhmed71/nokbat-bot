@@ -16,6 +16,7 @@ const {
   studentMainKeyboard,
   aiSubjectsKeyboard,
   aiAfterAnswerKeyboard,
+  helpKeyboard,
   studentPickKeyboard,
 } = require('./handlers/student');
 const { promptForNationalId, handleNationalIdText } = require('./handlers/results');
@@ -34,6 +35,8 @@ function buildBot() {
         awaiting: null,
         ai: {
           subjectKey: null,
+          history: [],
+          lastAnswer: null,
         },
       }),
     })
@@ -97,7 +100,26 @@ function buildBot() {
     ctx.session.awaiting = 'ai_pick_subject';
     ctx.session.ai = ctx.session.ai || {};
     ctx.session.ai.subjectKey = null;
+    ctx.session.ai.history = [];
+    ctx.session.ai.lastAnswer = null;
     return ctx.reply('🤖 اختر المادة التي تريد السؤال عنها:', aiSubjectsKeyboard());
+  });
+
+  bot.hears('ℹ️ المساعدة', async (ctx) => {
+    if (isAdmin(ctx)) {
+      return ctx.reply('استخدم /admin لفتح لوحة تحكم المدير.');
+    }
+    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
+    if (teacher) {
+      return ctx.reply(
+        'المساعدة:\n\n- 📅 جدولي اليوم: يعرض جدول حصصك.\n- 🔎 بحث طالب (لجنة): اكتب اسم الطالب لعرض بيانات لجنته.\n',
+        teacherMainKeyboard()
+      );
+    }
+    return ctx.reply(
+      'ℹ️ المساعدة — اختر ما تريد:',
+      helpKeyboard()
+    );
   });
 
   bot.hears('🏠 القائمة الرئيسية', async (ctx) => {
@@ -112,6 +134,8 @@ function buildBot() {
     ctx.session.awaiting = null;
     ctx.session.ai = ctx.session.ai || {};
     ctx.session.ai.subjectKey = null;
+    ctx.session.ai.history = [];
+    ctx.session.ai.lastAnswer = null;
     return ctx.reply('اختر خدمة من القائمة:', studentMainKeyboard());
   });
 
@@ -156,10 +180,20 @@ function buildBot() {
       const subjectName = subjectLabel(subjectKey);
       // نبقي وضع الـ AI فعّال للأسئلة المتتابعة حتى يرجع المستخدم للقائمة
       try {
-        const answer = await askGemini({ subjectKey, question: txt });
+        const history = Array.isArray(ctx.session?.ai?.history)
+          ? ctx.session.ai.history
+          : [];
+        const answer = await askGemini({
+          subjectKey,
+          question: txt,
+          history,
+        });
         const safe =
           answer ||
           'لم أستطع توليد إجابة الآن. جرّب إعادة صياغة السؤال أو اسأل بطريقة أبسط.';
+        ctx.session.ai = ctx.session.ai || {};
+        ctx.session.ai.history = [...history, { q: txt, a: safe }].slice(-2);
+        ctx.session.ai.lastAnswer = safe;
         ctx.session.awaiting = 'ai_question';
         await ctx.reply(
           `المادة: ${subjectName}\n\n${safe}\n\nاكتب سؤالك التالي مباشرة 👇`,
@@ -223,7 +257,73 @@ function buildBot() {
     ctx.session.awaiting = null;
     ctx.session.ai = ctx.session.ai || {};
     ctx.session.ai.subjectKey = null;
+    ctx.session.ai.history = [];
+    ctx.session.ai.lastAnswer = null;
     return ctx.reply('اختر من القائمة:', studentMainKeyboard());
+  });
+
+  bot.action('ai:change_subject', async (ctx) => {
+    await ctx.answerCbQuery();
+    ctx.session.awaiting = 'ai_pick_subject';
+    ctx.session.ai = ctx.session.ai || {};
+    ctx.session.ai.subjectKey = null;
+    ctx.session.ai.history = [];
+    ctx.session.ai.lastAnswer = null;
+    return ctx.reply('📌 اختر مادة جديدة:', aiSubjectsKeyboard());
+  });
+
+  bot.action('ai:summarize', async (ctx) => {
+    await ctx.answerCbQuery();
+    const last = String(ctx.session?.ai?.lastAnswer || '').trim();
+    if (!last) return ctx.reply('لا توجد إجابة سابقة لتلخيصها.');
+    try {
+      const answer = await askGemini({
+        subjectKey: ctx.session?.ai?.subjectKey || 'other',
+        question: `لخّص الإجابة التالية في 3 نقاط قصيرة:\n\n${last}`,
+        history: [],
+      });
+      return ctx.reply(`📝 ملخص:\n\n${answer}`, aiAfterAnswerKeyboard());
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('gemini summarize error', e);
+      return ctx.reply('تعذر تلخيص الإجابة حالياً.', aiAfterAnswerKeyboard());
+    }
+  });
+
+  bot.action('ai:simplify', async (ctx) => {
+    await ctx.answerCbQuery();
+    const last = String(ctx.session?.ai?.lastAnswer || '').trim();
+    if (!last) return ctx.reply('لا توجد إجابة سابقة لتبسيطها.');
+    try {
+      const answer = await askGemini({
+        subjectKey: ctx.session?.ai?.subjectKey || 'other',
+        question: `بسّط الشرح جداً لطالب متوسط مع مثال قصير:\n\n${last}`,
+        history: [],
+      });
+      return ctx.reply(`🧠 شرح أبسط:\n\n${answer}`, aiAfterAnswerKeyboard());
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('gemini simplify error', e);
+      return ctx.reply('تعذر تبسيط الإجابة حالياً.', aiAfterAnswerKeyboard());
+    }
+  });
+
+  bot.action('ai:detail', async (ctx) => {
+    await ctx.answerCbQuery();
+    const last = String(ctx.session?.ai?.lastAnswer || '').trim();
+    if (!last) return ctx.reply('لا توجد إجابة سابقة لتفصيلها.');
+    try {
+      const answer = await askGemini({
+        subjectKey: ctx.session?.ai?.subjectKey || 'other',
+        question: `وسّع الشرح بالتفصيل مع خطوات مرتبة:\n\n${last}`,
+        history: [],
+      });
+      return ctx.reply(`🧩 شرح بالتفصيل:\n\n${answer}`, aiAfterAnswerKeyboard());
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('gemini detail error', e);
+      return ctx.reply('تعذر تفصيل الإجابة حالياً.', aiAfterAnswerKeyboard());
+    }
   });
 
   bot.action('ai:again', async (ctx) => {
@@ -242,11 +342,42 @@ function buildBot() {
     const key = ctx.match[1];
     ctx.session.ai = ctx.session.ai || {};
     ctx.session.ai.subjectKey = key;
+    ctx.session.ai.history = ctx.session.ai.history || [];
+    ctx.session.ai.lastAnswer = ctx.session.ai.lastAnswer || null;
     ctx.session.awaiting = 'ai_question';
     await ctx.answerCbQuery();
-    return ctx.reply('اكتب سؤالك وهرد عليك فوراً 👇', {
+    return ctx.reply('✍️ اكتب سؤالك (وتقدر تتابع بأسئلة بعده):', {
       reply_markup: { remove_keyboard: true },
     });
+  });
+
+  bot.action('help:home', async (ctx) => {
+    await ctx.answerCbQuery();
+    return ctx.reply('اختر خدمة من القائمة:', studentMainKeyboard());
+  });
+
+  bot.action('help:ai', async (ctx) => {
+    await ctx.answerCbQuery();
+    return ctx.reply(
+      '🤖 مساعد AI\n\n1) اضغط «🤖 اسأل مساعد AI»\n2) اختر المادة\n3) اكتب سؤالك\n\nنصيحة: اسأل سؤال متابعة مباشرة بدون ضغط أي زر.',
+      helpKeyboard()
+    );
+  });
+
+  bot.action('help:committee', async (ctx) => {
+    await ctx.answerCbQuery();
+    return ctx.reply(
+      '🧾 لجنّتي\n\nاضغط «🧾 لجنّتي» ثم اكتب اسمك الكامل كما هو مسجل في المدرسة.',
+      helpKeyboard()
+    );
+  });
+
+  bot.action('help:result', async (ctx) => {
+    await ctx.answerCbQuery();
+    return ctx.reply(
+      '🏁 نتيجتي\n\nاضغط «🏁 نتيجتي» ثم اكتب رقم الهوية/الإقامة.\nإذا لم تُرسل الصورة سيتم إرسال رابط النتيجة.',
+      helpKeyboard()
+    );
   });
 
   bot.catch((err, ctx) => {
