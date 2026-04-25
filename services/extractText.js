@@ -20,8 +20,12 @@ async function extractTextFromFile(filePath, mime) {
 
   if (ext === '.pdf' || m === 'application/pdf') {
     const buf = fs.readFileSync(p);
-    const pdfParse =
+    // pdf-parse قد يختلف شكل التصدير حسب الإصدار (CJS/ESM)
+    let pdfParse =
       typeof pdfParseMod === 'function' ? pdfParseMod : pdfParseMod?.default;
+    if (typeof pdfParse !== 'function') pdfParse = pdfParseMod?.pdfParse;
+    if (typeof pdfParse !== 'function') pdfParse = pdfParseMod?.default?.pdfParse;
+    if (typeof pdfParse !== 'function') pdfParse = pdfParseMod?.default?.default;
     if (typeof pdfParse !== 'function') {
       throw new Error('pdf_parse_invalid_export');
     }
