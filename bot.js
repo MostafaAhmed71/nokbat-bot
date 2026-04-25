@@ -245,6 +245,12 @@ function buildBot() {
 
     const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
     if (teacher) {
+      // تدفق رفع المراجعة للمعلم (لأن handleTeacherText له fallback عام)
+      if (txt === '📤 رفع مراجعة') {
+        ctx.session.upload = { kind: 'review', gradeKey: null, subjectKey: null };
+        ctx.session.awaiting = 'tch_upload_pick_grade';
+        return ctx.reply('اختر الصف لهذه المراجعة:', gradesKeyboard('tch:grade'));
+      }
       return handleTeacherText(ctx, teacher);
     }
 
