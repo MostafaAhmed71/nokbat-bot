@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 
-const pdfParse = require('pdf-parse');
+const pdfParseMod = require('pdf-parse');
 const mammoth = require('mammoth');
 
 function extOf(p) {
@@ -20,6 +20,11 @@ async function extractTextFromFile(filePath, mime) {
 
   if (ext === '.pdf' || m === 'application/pdf') {
     const buf = fs.readFileSync(p);
+    const pdfParse =
+      typeof pdfParseMod === 'function' ? pdfParseMod : pdfParseMod?.default;
+    if (typeof pdfParse !== 'function') {
+      throw new Error('pdf_parse_invalid_export');
+    }
     const out = await pdfParse(buf);
     return String(out?.text || '');
   }
