@@ -47,6 +47,7 @@ function buildBot() {
           history: [],
           lastAnswer: null,
           style: 'medium',
+          lastSources: [],
         },
         student: {
           gradeKey: null,
@@ -212,6 +213,7 @@ function buildBot() {
     ctx.session.ai.subjectKey = null;
     ctx.session.ai.history = [];
     ctx.session.ai.lastAnswer = null;
+    ctx.session.ai.lastSources = [];
     ctx.session.ai.style = ctx.session.ai.style || 'medium';
     ctx.session.quiz = ctx.session.quiz || {};
     ctx.session.quiz.subjectKey = ctx.session.quiz.subjectKey || null;
@@ -290,6 +292,19 @@ function buildBot() {
                 topK: 5,
               })
             : [];
+        ctx.session.ai = ctx.session.ai || {};
+        ctx.session.ai.lastSources = Array.from(
+          new Set(
+            (retrievedChunks || [])
+              .map((r) => `${String(r.title || '').trim()}|${Number(r.chunk_order ?? 0)}`)
+              .filter((x) => !x.startsWith('|'))
+          )
+        )
+          .slice(0, 6)
+          .map((x) => {
+            const [title, order] = x.split('|');
+            return { title, chunk_order: Number(order || 0) };
+          });
         const answer = await askGemini({
           subjectKey,
           question: txt,
@@ -534,6 +549,7 @@ function buildBot() {
     ctx.session.ai.subjectKey = null;
     ctx.session.ai.history = [];
     ctx.session.ai.lastAnswer = null;
+    ctx.session.ai.lastSources = [];
     ctx.session.ai.style = ctx.session.ai.style || 'medium';
     ctx.session.quiz = ctx.session.quiz || {};
     ctx.session.quiz.current = null;
@@ -547,6 +563,7 @@ function buildBot() {
     ctx.session.ai.subjectKey = null;
     ctx.session.ai.history = [];
     ctx.session.ai.lastAnswer = null;
+    ctx.session.ai.lastSources = [];
     ctx.session.ai.style = ctx.session.ai.style || 'medium';
     return ctx.reply('📌 اختر مادة جديدة:', aiSubjectsKeyboard());
   });
@@ -562,7 +579,22 @@ function buildBot() {
     ctx.session.ai = ctx.session.ai || {};
     ctx.session.ai.history = [];
     ctx.session.ai.lastAnswer = null;
+    ctx.session.ai.lastSources = [];
     return ctx.reply('🗑️ تم مسح محادثة الـ AI. اكتب سؤالك الآن 👇', aiAfterAnswerKeyboard());
+  });
+
+  bot.action('ai:sources', async (ctx) => {
+    await ctx.answerCbQuery();
+    const sources = Array.isArray(ctx.session?.ai?.lastSources)
+      ? ctx.session.ai.lastSources
+      : [];
+    if (!sources.length) {
+      return ctx.reply('لا توجد مصادر مستخدمة في آخر إجابة (أو لم يتم العثور على محتوى مرتبط).');
+    }
+    const lines = sources.map(
+      (s, i) => `[#${i + 1}] ${s.title || 'مصدر'} (جزء ${Number(s.chunk_order || 0) + 1})`
+    );
+    return ctx.reply(`📎 المصادر المستخدمة:\n\n${lines.join('\n')}`, aiAfterAnswerKeyboard());
   });
 
   bot.action('ai:summarize', async (ctx) => {

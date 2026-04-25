@@ -74,6 +74,7 @@ function aiAfterAnswerKeyboard() {
       Markup.button.callback('⚙️ أسلوب الشرح', 'ai:settings'),
       Markup.button.callback('🗑️ مسح المحادثة', 'ai:clear'),
     ],
+    [Markup.button.callback('📎 عرض المصادر', 'ai:sources')],
     [Markup.button.callback('اسأل سؤال تاني 🔄', 'ai:again')],
     [Markup.button.callback('ارجع للقائمة 🏠', 'ai:home')],
   ]);
