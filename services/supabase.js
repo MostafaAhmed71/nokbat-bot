@@ -402,6 +402,74 @@ async function createAnnouncement({ message, target }) {
   return { data, error };
 }
 
+async function addChatHistory({ telegram_id, question, answer, subject }) {
+  const client = requireClient();
+  const payload = {
+    telegram_id: String(telegram_id || '').trim(),
+    question: String(question || '').trim(),
+    answer: String(answer || '').trim(),
+    subject: String(subject || '').trim() || null,
+    created_at: new Date().toISOString(),
+  };
+  if (!payload.telegram_id || !payload.question || !payload.answer) {
+    return { data: null, error: null };
+  }
+  const { data, error } = await client
+    .from('chat_history')
+    .insert([payload])
+    .select('*')
+    .maybeSingle();
+  return { data, error };
+}
+
+async function addFavorite({ telegram_id, question, answer, subject }) {
+  const client = requireClient();
+  const payload = {
+    telegram_id: String(telegram_id || '').trim(),
+    question: String(question || '').trim(),
+    answer: String(answer || '').trim(),
+    subject: String(subject || '').trim() || null,
+    created_at: new Date().toISOString(),
+  };
+  if (!payload.telegram_id || !payload.question || !payload.answer) {
+    return { data: null, error: null };
+  }
+  const { data, error } = await client
+    .from('favorites')
+    .insert([payload])
+    .select('*')
+    .maybeSingle();
+  return { data, error };
+}
+
+async function listFavoritesForTelegramId(telegramId, limit = 20) {
+  const client = requireClient();
+  const tg = String(telegramId || '').trim();
+  if (!tg) return { data: [], error: null };
+  const { data, error } = await client
+    .from('favorites')
+    .select('id, question, answer, subject, created_at')
+    .eq('telegram_id', tg)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  return { data: data || [], error };
+}
+
+async function deleteFavorite({ telegramId, favoriteId }) {
+  const client = requireClient();
+  const tg = String(telegramId || '').trim();
+  const id = String(favoriteId || '').trim();
+  if (!tg || !id) return { data: null, error: null };
+  const { data, error } = await client
+    .from('favorites')
+    .delete()
+    .eq('id', id)
+    .eq('telegram_id', tg)
+    .select('id')
+    .maybeSingle();
+  return { data, error };
+}
+
 module.exports = {
   supabase,
   searchStudentsByName,
@@ -422,6 +490,10 @@ module.exports = {
   listAllTeacherTelegramIds,
   listAllParentTelegramIds,
   createAnnouncement,
+  addChatHistory,
+  addFavorite,
+  listFavoritesForTelegramId,
+  deleteFavorite,
   listTeachers,
   listStudentsPage,
   getScheduleForTeacherOnDay,

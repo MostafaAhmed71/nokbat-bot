@@ -36,6 +36,12 @@ const {
   linkParentToStudent,
 } = require('./services/supabase');
 const { listExamsForGrade } = require('./services/supabase');
+const {
+  addChatHistory,
+  addFavorite,
+  listFavoritesForTelegramId,
+  deleteFavorite,
+} = require('./services/supabase');
 const fs = require('fs');
 const path = require('path');
 
@@ -56,6 +62,7 @@ function buildBot() {
           lastAnswer: null,
           style: 'medium',
           lastSources: [],
+          lastQuestion: null,
         },
         student: {
           gradeKey: null,
@@ -443,9 +450,17 @@ function buildBot() {
           answer ||
           'لم أستطع توليد إجابة الآن. جرّب إعادة صياغة السؤال أو اسأل بطريقة أبسط.';
         ctx.session.ai = ctx.session.ai || {};
+        ctx.session.ai.lastQuestion = txt;
         ctx.session.ai.history = [...history, { q: txt, a: safe }].slice(-2);
         ctx.session.ai.lastAnswer = safe;
         ctx.session.awaiting = 'ai_question';
+        // حفظ سجل المحادثة
+        addChatHistory({
+          telegram_id: ctx.from.id,
+          question: txt,
+          answer: safe,
+          subject: subjectName,
+        }).catch(() => {});
         await ctx.reply(
           `المادة: ${subjectName}\n\n${safe}\n\nاكتب سؤالك التالي مباشرة 👇`,
           aiAfterAnswerKeyboard()
@@ -481,6 +496,52 @@ function buildBot() {
       'وجدنا أكثر من تطابق. اختر اسمك من القائمة:',
       studentPickKeyboard(data)
     );
+  });
+
+  bot.hears('⭐ مفضلتي', async (ctx) => {
+    if (isAdmin(ctx)) return ctx.reply('هذا الخيار مخصص للطلاب.');
+    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
+    if (teacher) return ctx.reply('هذا الخيار مخصص للطلاب.');
+    const { data, error } = await listFavoritesForTelegramId(ctx.from.id, 15);
+    if (error) return ctx.reply('تعذر جلب المفضلة حالياً.');
+    if (!data.length) return ctx.reply('لا يوجد عناصر محفوظة في المفضلة حتى الآن.');
+
+    for (const fav of data) {
+      const subj = fav.subject ? `(${fav.subject})` : '';
+      // eslint-disable-next-line no-await-in-loop
+      await ctx.reply(
+        `⭐ ${subj}\n\n❓ ${fav.question}\n\n✅ ${fav.answer}`.slice(0, 3800),
+        Markup.inlineKeyboard([
+          [Markup.button.callback('🗑️ حذف', `fav:del:${fav.id}`)],
+        ])
+      );
+    }
+    return ctx.reply('انتهت القائمة.', studentMainKeyboard());
+  });
+
+  bot.action('fav:save', async (ctx) => {
+    await ctx.answerCbQuery();
+    const q = String(ctx.session?.ai?.lastQuestion || '').trim();
+    const a = String(ctx.session?.ai?.lastAnswer || '').trim();
+    const subjectKey = ctx.session?.ai?.subjectKey || 'other';
+    const subjectName = subjectLabel(subjectKey);
+    if (!q || !a) return ctx.reply('لا توجد إجابة سابقة لحفظها.');
+    const { error } = await addFavorite({
+      telegram_id: ctx.from.id,
+      question: q,
+      answer: a,
+      subject: subjectName,
+    });
+    if (error) return ctx.reply('تعذر الحفظ حالياً.');
+    return ctx.reply('✅ تم الحفظ في المفضلة.', aiAfterAnswerKeyboard());
+  });
+
+  bot.action(/^fav:del:([0-9a-f-]{36})$/i, async (ctx) => {
+    const id = ctx.match[1];
+    await ctx.answerCbQuery();
+    const { error } = await deleteFavorite({ telegramId: ctx.from.id, favoriteId: id });
+    if (error) return ctx.reply('تعذر الحذف حالياً.');
+    return ctx.reply('تم الحذف.');
   });
 
   bot.action(/^grade:set:(m1|m2|m3|s1|s2|s3)$/, async (ctx) => {

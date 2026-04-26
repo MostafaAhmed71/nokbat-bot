@@ -114,3 +114,29 @@ create table if not exists public.announcements (
 
 create index if not exists idx_announcements_sent_at
   on public.announcements (sent_at desc);
+
+-- سجل محادثات AI
+create table if not exists public.chat_history (
+  id uuid primary key default uuid_generate_v4(),
+  telegram_id text not null,
+  question text not null,
+  answer text not null,
+  subject text,
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_chat_history_tg_created
+  on public.chat_history (telegram_id, created_at desc);
+
+-- المفضلة
+create table if not exists public.favorites (
+  id uuid primary key default uuid_generate_v4(),
+  telegram_id text not null,
+  question text not null,
+  answer text not null,
+  subject text,
+  created_at timestamptz default now()
+);
+
+create index if not exists idx_favorites_tg_created
+  on public.favorites (telegram_id, created_at desc);
