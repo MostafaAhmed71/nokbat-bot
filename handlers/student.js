@@ -23,6 +23,8 @@ function studentMainKeyboard() {
   return Markup.keyboard([
     [Markup.button.text('🤖 اسأل مساعد AI')],
     [Markup.button.text('🧪 اختبار سريع')],
+    [Markup.button.text('📊 اختبار تشخيصي')],
+    [Markup.button.text('⚡ تحدي اليوم'), Markup.button.text('🏆 المتصدرين')],
     [Markup.button.text('📅 جدول الامتحانات')],
     [Markup.button.text('⭐ مفضلتي')],
     [Markup.button.text('🧾 لجنّتي'), Markup.button.text('🏁 نتيجتي')],
@@ -176,12 +178,12 @@ function quizDifficultyKeyboard(current) {
   ]);
 }
 
-function gradesKeyboard(prefix = 'grade:set') {
+function gradesKeyboard(prefix = 'grade:set', homeCallback = 'help:home') {
   const mk = (key, label) => Markup.button.callback(label, `${prefix}:${key}`);
   return Markup.inlineKeyboard([
     [mk('m1', 'أول متوسط'), mk('m2', 'ثاني متوسط'), mk('m3', 'ثالث متوسط')],
     [mk('s1', 'أول ثانوي'), mk('s2', 'ثاني ثانوي'), mk('s3', 'ثالث ثانوي')],
-    [Markup.button.callback('🏠 رجوع للقائمة', 'help:home')],
+    [Markup.button.callback('🏠 رجوع', homeCallback)],
   ]);
 }
 

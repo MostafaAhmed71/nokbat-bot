@@ -470,6 +470,405 @@ async function deleteFavorite({ telegramId, favoriteId }) {
   return { data, error };
 }
 
+async function insertDiagnosticTest(payload) {
+  const client = requireClient();
+  const row = {
+    telegram_id: String(payload.telegram_id || '').trim(),
+    subject_key: String(payload.subject_key || '').trim(),
+    correct_count: Number(payload.correct_count ?? 0),
+    total: Number(payload.total ?? 10),
+    weak_summary: payload.weak_summary ? String(payload.weak_summary).trim() : null,
+    detail: payload.detail != null ? payload.detail : null,
+    created_at: new Date().toISOString(),
+  };
+  if (!row.telegram_id || !row.subject_key) return { data: null, error: null };
+  const { data, error } = await client
+    .from('diagnostic_tests')
+    .insert([row])
+    .select('*')
+    .maybeSingle();
+  return { data, error };
+}
+
+async function getDailyChallengeByDate(dateISO) {
+  const client = requireClient();
+  const d = String(dateISO || '').trim();
+  if (!d) return { data: null, error: null };
+  const { data, error } = await client
+    .from('daily_challenges')
+    .select('*')
+    .eq('challenge_date', d)
+    .maybeSingle();
+  return { data, error };
+}
+
+async function insertDailyChallenge(row) {
+  const client = requireClient();
+  const payload = {
+    challenge_date: String(row.challenge_date || '').trim(),
+    subject_key: String(row.subject_key || '').trim(),
+    question: String(row.question || '').trim(),
+    options: row.options,
+    correct_index: Number(row.correct_index),
+    created_at: new Date().toISOString(),
+  };
+  if (!payload.challenge_date || !payload.subject_key || !payload.question) {
+    return { data: null, error: null };
+  }
+  const { data, error } = await client
+    .from('daily_challenges')
+    .insert([payload])
+    .select('*')
+    .maybeSingle();
+  return { data, error };
+}
+
+async function getChallengeAnswerForUser(challengeId, telegramId) {
+  const client = requireClient();
+  const cid = String(challengeId || '').trim();
+  const tg = String(telegramId || '').trim();
+  if (!cid || !tg) return { data: null, error: null };
+  const { data, error } = await client
+    .from('challenge_answers')
+    .select('*')
+    .eq('challenge_id', cid)
+    .eq('telegram_id', tg)
+    .maybeSingle();
+  return { data, error };
+}
+
+async function insertChallengeAnswer(payload) {
+  const client = requireClient();
+  const row = {
+    challenge_id: String(payload.challenge_id || '').trim(),
+    telegram_id: String(payload.telegram_id || '').trim(),
+    chosen_index: Number(payload.chosen_index),
+    is_correct: Boolean(payload.is_correct),
+    response_ms: Math.max(0, Number(payload.response_ms || 0)),
+    points: Math.max(0, Number(payload.points || 0)),
+    created_at: new Date().toISOString(),
+  };
+  if (!row.challenge_id || !row.telegram_id) return { data: null, error: null };
+  const { data, error } = await client
+    .from('challenge_answers')
+    .insert([row])
+    .select('*')
+    .maybeSingle();
+  return { data, error };
+}
+
+async function listDailyChallengeIdsSince(dateISO) {
+  const client = requireClient();
+  const d = String(dateISO || '').trim();
+  if (!d) return { data: [], error: null };
+  const { data, error } = await client
+    .from('daily_challenges')
+    .select('id')
+    .gte('challenge_date', d);
+  return { data: data || [], error };
+}
+
+async function listChallengeAnswersForChallenges(challengeIds) {
+  const client = requireClient();
+  const ids = (challengeIds || []).map(String).filter(Boolean);
+  if (!ids.length) return { data: [], error: null };
+  const { data, error } = await client
+    .from('challenge_answers')
+    .select('telegram_id, points')
+    .in('challenge_id', ids);
+  return { data: data || [], error };
+}
+
+async function listTopChallengeUsersSince(dateISO, limit = 10) {
+  const { data: chRows, error: e1 } = await listDailyChallengeIdsSince(dateISO);
+  if (e1) return { data: [], error: e1 };
+  const ids = (chRows || []).map((r) => r.id).filter(Boolean);
+  const { data: ans, error: e2 } = await listChallengeAnswersForChallenges(ids);
+  if (e2) return { data: [], error: e2 };
+  const byTg = new Map();
+  for (const r of ans || []) {
+    const tg = String(r.telegram_id || '').trim();
+    if (!tg) continue;
+    byTg.set(tg, (byTg.get(tg) || 0) + Number(r.points || 0));
+  }
+  const sorted = Array.from(byTg.entries())
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, Math.max(1, Number(limit) || 10));
+  return { data: sorted.map(([telegram_id, points]) => ({ telegram_id, points })), error: null };
+}
+
+async function listChallengeTopForDate(dateISO, limit = 5) {
+  const client = requireClient();
+  const d = String(dateISO || '').trim();
+  if (!d) return { data: [], error: null };
+  const { data: ch, error: e1 } = await getDailyChallengeByDate(d);
+  if (e1 || !ch?.id) return { data: [], error: e1 };
+  const { data, error } = await client
+    .from('challenge_answers')
+    .select('telegram_id, points, response_ms, is_correct')
+    .eq('challenge_id', ch.id)
+    .order('points', { ascending: false })
+    .order('response_ms', { ascending: true })
+    .limit(Math.max(1, Number(limit) || 5));
+  return { data: data || [], error };
+}
+
+async function getStudentNamesByTelegramIds(telegramIds) {
+  const client = requireClient();
+  const ids = [...new Set((telegramIds || []).map((x) => String(x).trim()).filter(Boolean))];
+  if (!ids.length) return { data: [], error: null };
+  const { data, error } = await client
+    .from('students')
+    .select('telegram_id, name')
+    .in('telegram_id', ids);
+  return { data: data || [], error };
+}
+
+async function insertStudentRow(row) {
+  const client = requireClient();
+  const payload = {
+    name: String(row.name || '').trim(),
+    national_id: row.national_id != null ? String(row.national_id).trim() || null : null,
+    grade: row.grade != null ? String(row.grade).trim() || null : null,
+    class: row.class != null ? String(row.class).trim() || null : null,
+    committee_number: row.committee_number != null ? String(row.committee_number).trim() || null : null,
+    committee_location: row.committee_location != null ? String(row.committee_location).trim() || null : null,
+    created_at: new Date().toISOString(),
+  };
+  if (!payload.name) return { data: null, error: new Error('name required') };
+  const { data, error } = await client.from('students').insert([payload]).select('*').maybeSingle();
+  return { data, error };
+}
+
+async function updateStudentRow(studentId, patch) {
+  const client = requireClient();
+  const id = String(studentId || '').trim();
+  if (!id) return { data: null, error: null };
+  const allowed = ['name', 'national_id', 'grade', 'class', 'committee_number', 'committee_location'];
+  const update = {};
+  for (const k of allowed) {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) {
+      const v = patch[k];
+      update[k] = v == null || v === '' ? null : String(v).trim();
+    }
+  }
+  if (!Object.keys(update).length) return { data: null, error: null };
+  const { data, error } = await client
+    .from('students')
+    .update(update)
+    .eq('id', id)
+    .select('*')
+    .maybeSingle();
+  return { data, error };
+}
+
+async function deleteStudentRow(studentId) {
+  const client = requireClient();
+  const id = String(studentId || '').trim();
+  if (!id) return { data: null, error: null };
+  const { data, error } = await client.from('students').delete().eq('id', id).select('id').maybeSingle();
+  return { data, error };
+}
+
+async function getAdminDashboardCounts() {
+  const client = requireClient();
+  const [a, b, c, d] = await Promise.all([
+    client.from('students').select('id', { count: 'exact', head: true }),
+    client.from('teachers').select('id', { count: 'exact', head: true }),
+    client.from('content_items').select('id', { count: 'exact', head: true }),
+    client.from('exams_schedule').select('id', { count: 'exact', head: true }),
+  ]);
+  return {
+    data: {
+      students: a.count ?? 0,
+      teachers: b.count ?? 0,
+      contentItems: c.count ?? 0,
+      examsSchedule: d.count ?? 0,
+    },
+    error: a.error || b.error || c.error || d.error,
+  };
+}
+
+async function listStudentsAdmin({ nameQuery, grade, limit = 100 }) {
+  const client = requireClient();
+  const lim = Math.min(Math.max(1, Number(limit) || 100), 400);
+  let q = client
+    .from('students')
+    .select('id, name, national_id, grade, class, telegram_id, created_at')
+    .order('grade', { ascending: true })
+    .order('class', { ascending: true })
+    .order('name', { ascending: true })
+    .limit(lim);
+  const g = String(grade || '').trim();
+  if (g) q = q.eq('grade', g);
+  const nq = String(nameQuery || '').trim();
+  if (nq && nq !== '.') {
+    q = q.ilike('name', `%${escapeIlike(nq)}%`);
+  }
+  const { data, error } = await q;
+  return { data: data || [], error };
+}
+
+async function listTeachersAdmin({ nameQuery, subject, limit = 100 }) {
+  const client = requireClient();
+  const lim = Math.min(Math.max(1, Number(limit) || 100), 400);
+  let q = client
+    .from('teachers')
+    .select('id, name, subject, telegram_id, created_at')
+    .order('name', { ascending: true })
+    .limit(lim);
+  const sub = String(subject || '').trim();
+  if (sub) q = q.eq('subject', sub);
+  const nq = String(nameQuery || '').trim();
+  if (nq && nq !== '.') {
+    q = q.ilike('name', `%${escapeIlike(nq)}%`);
+  }
+  const { data, error } = await q;
+  return { data: data || [], error };
+}
+
+async function listContentItemsAdmin({ titleQuery, grade, subjectKey, limit = 100 }) {
+  const client = requireClient();
+  const lim = Math.min(Math.max(1, Number(limit) || 100), 400);
+  let q = client
+    .from('content_items')
+    .select('id, kind, grade, subject_key, title, source, created_at')
+    .order('created_at', { ascending: false })
+    .limit(lim);
+  const g = String(grade || '').trim();
+  if (g) q = q.eq('grade', g);
+  const sk = String(subjectKey || '').trim();
+  if (sk) q = q.eq('subject_key', sk);
+  const tq = String(titleQuery || '').trim();
+  if (tq && tq !== '.') {
+    q = q.ilike('title', `%${escapeIlike(tq)}%`);
+  }
+  const { data, error } = await q;
+  return { data: data || [], error };
+}
+
+async function upsertTeacherRecord({ name, subject, telegram_id }) {
+  const client = requireClient();
+  const payload = {
+    name: String(name || '').trim(),
+    subject: subject != null ? String(subject).trim() || null : null,
+    telegram_id: String(telegram_id || '').trim(),
+  };
+  if (!payload.name || !payload.telegram_id) return { data: null, error: null };
+  const { data, error } = await client
+    .from('teachers')
+    .upsert([payload], { onConflict: 'telegram_id' })
+    .select('*')
+    .maybeSingle();
+  return { data, error };
+}
+
+async function upsertStudentRecord({ name, national_id, grade, class: klass, committee_number, committee_location }) {
+  const client = requireClient();
+  const nid = normalizeNationalId(national_id);
+  if (!nid) return { data: null, error: new Error('invalid_national_id') };
+  const payload = {
+    name: String(name || '').trim(),
+    national_id: nid,
+    grade: grade != null ? String(grade).trim() || null : null,
+    class: klass != null ? String(klass).trim() || null : null,
+    committee_number: committee_number != null ? String(committee_number).trim() || null : null,
+    committee_location: committee_location != null ? String(committee_location).trim() || null : null,
+  };
+  if (!payload.name) return { data: null, error: new Error('name_required') };
+  const { data, error } = await client
+    .from('students')
+    .upsert([payload], { onConflict: 'national_id' })
+    .select('*')
+    .maybeSingle();
+  return { data, error };
+}
+
+async function insertScheduleSlot({ teacherTelegramId, day, period, grade, class: klass }) {
+  const client = requireClient();
+  const tg = String(teacherTelegramId || '').trim();
+  if (!tg) return { data: null, error: null };
+  const { data: teacher, error: tErr } = await client
+    .from('teachers')
+    .select('id, name')
+    .eq('telegram_id', tg)
+    .maybeSingle();
+  if (tErr) return { data: null, error: tErr };
+  if (!teacher?.id) return { data: null, error: new Error('teacher_not_found') };
+  const row = {
+    teacher_id: teacher.id,
+    day: String(day || '').trim(),
+    period: String(period || '').trim(),
+    grade: grade != null ? String(grade).trim() || null : null,
+    class: klass != null ? String(klass).trim() || null : null,
+  };
+  if (!row.day || !row.period) return { data: null, error: new Error('day_period_required') };
+  const { data, error } = await client.from('schedule').insert([row]).select('*').maybeSingle();
+  return { data, error };
+}
+
+async function getAdminWeeklyKpis() {
+  const client = requireClient();
+  const since = new Date();
+  since.setDate(since.getDate() - 7);
+  const sinceIso = since.toISOString();
+
+  const head = (t, col = 'created_at') =>
+    client.from(t).select('id', { count: 'exact', head: true }).gte(col, sinceIso);
+
+  const [
+    studentsTotal,
+    studentsLinked,
+    teachersLinked,
+    parentsTotal,
+    chatWeek,
+    favWeek,
+    diagWeek,
+    challWeek,
+    contentTotal,
+    annWeek,
+  ] = await Promise.all([
+    client.from('students').select('id', { count: 'exact', head: true }),
+    client.from('students').select('id', { count: 'exact', head: true }).not('telegram_id', 'is', null),
+    client.from('teachers').select('id', { count: 'exact', head: true }).not('telegram_id', 'is', null),
+    client.from('parents').select('id', { count: 'exact', head: true }),
+    head('chat_history'),
+    head('favorites'),
+    head('diagnostic_tests'),
+    head('challenge_answers'),
+    client.from('content_items').select('id', { count: 'exact', head: true }),
+    head('announcements', 'sent_at'),
+  ]);
+
+  const err =
+    studentsTotal.error ||
+    studentsLinked.error ||
+    teachersLinked.error ||
+    parentsTotal.error ||
+    chatWeek.error ||
+    favWeek.error ||
+    diagWeek.error ||
+    challWeek.error ||
+    contentTotal.error ||
+    annWeek.error;
+
+  return {
+    data: {
+      studentsTotal: studentsTotal.count ?? 0,
+      studentsLinked: studentsLinked.count ?? 0,
+      teachersLinked: teachersLinked.count ?? 0,
+      parentsTotal: parentsTotal.count ?? 0,
+      chatHistoryWeek: chatWeek.count ?? 0,
+      favoritesWeek: favWeek.count ?? 0,
+      diagnosticTestsWeek: diagWeek.count ?? 0,
+      challengeAnswersWeek: challWeek.count ?? 0,
+      contentItemsTotal: contentTotal.count ?? 0,
+      announcementsWeek: annWeek.count ?? 0,
+    },
+    error: err,
+  };
+}
+
 module.exports = {
   supabase,
   searchStudentsByName,
@@ -502,4 +901,25 @@ module.exports = {
   createContentItem,
   insertContentChunks,
   listContentChunksForGradeSubject,
+  insertDiagnosticTest,
+  getDailyChallengeByDate,
+  insertDailyChallenge,
+  getChallengeAnswerForUser,
+  insertChallengeAnswer,
+  listDailyChallengeIdsSince,
+  listChallengeAnswersForChallenges,
+  listTopChallengeUsersSince,
+  listChallengeTopForDate,
+  getStudentNamesByTelegramIds,
+  insertStudentRow,
+  updateStudentRow,
+  deleteStudentRow,
+  getAdminWeeklyKpis,
+  getAdminDashboardCounts,
+  listStudentsAdmin,
+  listTeachersAdmin,
+  listContentItemsAdmin,
+  upsertTeacherRecord,
+  upsertStudentRecord,
+  insertScheduleSlot,
 };

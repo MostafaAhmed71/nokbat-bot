@@ -9,6 +9,8 @@ const {
   isAdmin,
   handleAdminText,
   adminPanelKeyboard,
+  handleAdminDocument,
+  handleAdminPhoto,
 } = require('./handlers/admin');
 const { teacherMainKeyboard, handleTeacherText } = require('./handlers/teacher');
 const {
@@ -44,6 +46,8 @@ const {
 } = require('./services/supabase');
 const fs = require('fs');
 const path = require('path');
+const { extractJsonObject } = require('./utils/jsonExtract');
+const { registerDiagnosticChallenge } = require('./handlers/diagnosticChallenge');
 
 function buildBot() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -77,11 +81,14 @@ function buildBot() {
           current: null,
         },
         upload: null,
+        diagnostic: null,
+        dailyChallenge: null,
       }),
     })
   );
 
   registerAdmin(bot);
+  registerDiagnosticChallenge(bot);
 
   bot.command(['myid', 'معرف'], async (ctx) => {
     const id = ctx.from.id;
@@ -317,6 +324,8 @@ function buildBot() {
     ctx.session.quiz.subjectKey = ctx.session.quiz.subjectKey || null;
     ctx.session.quiz.points = Number(ctx.session.quiz.points || 0);
     ctx.session.quiz.current = null;
+    ctx.session.diagnostic = null;
+    ctx.session.dailyChallenge = null;
     return ctx.reply('اختر خدمة من القائمة:', studentMainKeyboard());
   });
 
@@ -335,11 +344,11 @@ function buildBot() {
     const txt = (ctx.message.text || '').trim();
     if (txt.startsWith('/')) return;
 
-    const adminWaiting =
+    const adminAwaiting =
       isAdmin(ctx) &&
-      (ctx.session.awaiting === 'admin_student' ||
-        ctx.session.awaiting === 'admin_teacher');
-    if (adminWaiting) {
+      ctx.session.awaiting &&
+      String(ctx.session.awaiting).startsWith('admin_');
+    if (adminAwaiting) {
       return handleAdminText(ctx);
     }
 
@@ -649,6 +658,10 @@ function buildBot() {
   });
 
   bot.on('document', async (ctx) => {
+    if (isAdmin(ctx)) {
+      const handled = await handleAdminDocument(ctx);
+      if (handled) return;
+    }
     const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
     if (!teacher) return;
     if (ctx.session.awaiting !== 'tch_upload_file') return;
@@ -707,6 +720,13 @@ function buildBot() {
       // eslint-disable-next-line no-console
       console.error('teacher upload error', e);
       return ctx.reply('تعذر رفع/فهرسة الملف. حاول مرة أخرى.');
+    }
+  });
+
+  bot.on('photo', async (ctx) => {
+    if (isAdmin(ctx)) {
+      const handled = await handleAdminPhoto(ctx);
+      if (handled) return;
     }
   });
 
@@ -909,19 +929,6 @@ function buildBot() {
       helpKeyboard()
     );
   });
-
-  function extractJsonObject(text) {
-    const s = String(text || '');
-    const start = s.indexOf('{');
-    const end = s.lastIndexOf('}');
-    if (start === -1 || end === -1 || end <= start) return null;
-    const raw = s.slice(start, end + 1);
-    try {
-      return JSON.parse(raw);
-    } catch {
-      return null;
-    }
-  }
 
   function dayKeyNow() {
     const d = new Date();
