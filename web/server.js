@@ -47,19 +47,80 @@ function htmlPage(title, body) {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>${title}</title>
   <style>
-    body{font-family:system-ui,Segoe UI,Arial;max-width:900px;margin:24px auto;padding:0 16px;line-height:1.5}
-    .card{border:1px solid #ddd;border-radius:12px;padding:16px;margin:12px 0}
-    input,select,button{font-size:16px;padding:10px;border-radius:10px;border:1px solid #ccc}
-    button{cursor:pointer}
+    :root{--bg:#0b1220;--card:#0f1a2f;--muted:#a6b0c3;--text:#e7ecf5;--border:#21314f;--accent:#7c5cff;--accent2:#2dd4bf;--danger:#ef4444}
+    body{background:linear-gradient(180deg,#070b14 0%, #0b1220 100%);color:var(--text);font-family:system-ui,Segoe UI,Arial;max-width:1100px;margin:26px auto;padding:0 16px;line-height:1.6}
+    a{color:var(--text);text-decoration:none}
+    a.link{color:var(--accent2);text-decoration:underline}
+    .topbar{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
+    .brand{display:flex;flex-direction:column}
+    .brand b{font-size:18px}
+    .brand span{color:var(--muted);font-size:13px}
+    .nav{display:flex;gap:10px;flex-wrap:wrap}
+    .nav a{border:1px solid var(--border);background:rgba(255,255,255,.02);padding:10px 12px;border-radius:12px}
+    .nav a:hover{border-color:rgba(124,92,255,.7)}
+    .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
+    .card{background:rgba(15,26,47,.9);border:1px solid var(--border);border-radius:16px;padding:16px}
+    .card h2,.card h3{margin:0 0 10px 0}
+    .muted{color:var(--muted)}
+    .kpi{display:flex;flex-direction:column;gap:6px}
+    .kpi .num{font-size:28px;font-weight:800}
+    .kpi .label{color:var(--muted);font-size:13px}
     .row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
-    .muted{color:#666}
-    code{background:#f5f5f5;padding:2px 6px;border-radius:6px}
+    input,select,button{font-size:15px;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:#0b1220;color:var(--text)}
+    button{cursor:pointer;background:linear-gradient(90deg,var(--accent) 0%, #5b9dff 100%);border:none}
+    button.secondary{background:rgba(255,255,255,.06);border:1px solid var(--border)}
+    button.danger{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.35);color:#ffd2d2}
+    code{background:rgba(255,255,255,.06);padding:2px 6px;border-radius:8px;border:1px solid var(--border)}
+    table{width:100%;border-collapse:collapse}
+    th,td{border:1px solid var(--border);padding:10px;vertical-align:top}
+    th{background:rgba(255,255,255,.04);text-align:right}
+    .pill{display:inline-block;padding:4px 10px;border-radius:999px;border:1px solid var(--border);background:rgba(255,255,255,.03);font-size:12px;color:var(--muted)}
+    .col-3{grid-column:span 3}
+    .col-4{grid-column:span 4}
+    .col-6{grid-column:span 6}
+    .col-8{grid-column:span 8}
+    .col-12{grid-column:span 12}
+    @media (max-width:900px){.col-3,.col-4,.col-6,.col-8{grid-column:span 12}}
   </style>
 </head>
 <body>
+  <div class="topbar">
+    <div class="brand">
+      <b>لوحة الإدارة — نخبة الشمال</b>
+      <span>إدارة الطلاب والمعلمين والنتائج والمراجعات والامتحانات</span>
+    </div>
+    <div class="nav">
+      <a href="/admin">الرئيسية</a>
+      <a href="/admin/students">الطلاب</a>
+      <a href="/admin/teachers">المعلمين</a>
+      <a href="/admin/reviews">المراجعات</a>
+      <a href="/admin/import">استيراد</a>
+      <a href="/admin/exams">الامتحانات</a>
+      <a href="/admin/results">النتائج</a>
+      <a href="/admin/library">مكتبة المحتوى</a>
+      <a href="/admin/manual">إدخال يدوي</a>
+    </div>
+  </div>
   ${body}
 </body>
 </html>`;
+}
+
+async function countTable(table) {
+  const { count, error } = await supabase
+    .from(table)
+    .select('id', { count: 'exact', head: true });
+  if (error) return null;
+  return count ?? null;
+}
+
+function adminDashboardCards({ students, teachers, reviews, exams }) {
+  return `<div class="grid">
+  <div class="card col-3"><div class="kpi"><div class="num">${students ?? '—'}</div><div class="label">طلاب</div></div></div>
+  <div class="card col-3"><div class="kpi"><div class="num">${teachers ?? '—'}</div><div class="label">معلمين</div></div></div>
+  <div class="card col-3"><div class="kpi"><div class="num">${reviews ?? '—'}</div><div class="label">مراجعات/محتوى</div></div></div>
+  <div class="card col-3"><div class="kpi"><div class="num">${exams ?? '—'}</div><div class="label">مواعيد امتحانات</div></div></div>
+</div>`;
 }
 
 function ensureDir(p) {
@@ -237,28 +298,207 @@ function main() {
   const uploadTmp = multer({ dest: path.join(filesRoot, '_tmp') });
 
   app.get('/admin', basicAuth, (req, res) => {
-    res.send(
-      htmlPage(
-        'لوحة الأدمن',
-        `<h2>لوحة الأدمن</h2>
-<div class="card">
-  <div class="row">
-    <a href="/admin/import">استيراد Excel</a>
-    <span class="muted">|</span>
-    <a href="/admin/results">رفع صور النتائج</a>
-    <span class="muted">|</span>
-    <a href="/admin/manual">إدخال يدوي</a>
-    <span class="muted">|</span>
-    <a href="/admin/library">مكتبة المنهج والمراجعات</a>
-    <span class="muted">|</span>
-    <a href="/admin/exams">جدول الامتحانات</a>
+    (async () => {
+      const [students, teachers, reviews, exams] = await Promise.all([
+        countTable('students'),
+        countTable('teachers'),
+        countTable('content_items'),
+        countTable('exams_schedule'),
+      ]);
+
+      res.send(
+        htmlPage(
+          'لوحة الأدمن',
+          `<div class="card">
+  <h2 style="margin:0 0 6px 0">نظرة عامة</h2>
+  <div class="muted">آخر تحديث: ${escapeHtml(new Date().toLocaleString('ar-SA'))}</div>
+</div>
+${adminDashboardCards({ students, teachers, reviews, exams })}
+
+<div class="grid">
+  <div class="card col-6">
+    <h3>اختصارات سريعة</h3>
+    <div class="row">
+      <a class="link" href="/admin/import">استيراد Excel</a>
+      <a class="link" href="/admin/exams">رفع جدول الامتحانات</a>
+      <a class="link" href="/admin/results">رفع صور النتائج</a>
+      <a class="link" href="/admin/library">رفع محتوى/مراجعات</a>
+    </div>
+    <div class="muted" style="margin-top:10px">الملفات متاحة عبر <code>/files/...</code> حسب الإعداد.</div>
   </div>
+  <div class="card col-6">
+    <h3>قوائم</h3>
+    <div class="row">
+      <a class="link" href="/admin/students">قائمة الطلاب</a>
+      <a class="link" href="/admin/teachers">قائمة المعلمين</a>
+      <a class="link" href="/admin/reviews">قائمة المراجعات</a>
+    </div>
+    <div class="muted" style="margin-top:10px">يمكنك البحث داخل القوائم وتصفية الصف/المادة.</div>
+  </div>
+</div>`
+        )
+      );
+    })().catch((e) => res.status(500).send(String(e.message || e)));
+  });
+
+  app.get('/admin/students', basicAuth, async (req, res) => {
+    try {
+      const q = String(req.query.q || '').trim();
+      const grade = String(req.query.grade || '').trim();
+      let query = supabase.from('students').select('id, name, national_id, grade, class, telegram_id, created_at');
+      if (q) query = query.ilike('name', `%${q}%`);
+      if (grade) query = query.eq('grade', grade);
+      const { data, error } = await query.order('grade', { ascending: true }).order('class', { ascending: true }).order('name', { ascending: true }).limit(400);
+      if (error) throw error;
+
+      const rows = (data || [])
+        .map(
+          (s) => `<tr>
+  <td>${escapeHtml(s.name)}</td>
+  <td><code>${escapeHtml(s.national_id || '—')}</code></td>
+  <td>${escapeHtml(s.grade || '—')}</td>
+  <td>${escapeHtml(s.class || '—')}</td>
+  <td>${s.telegram_id ? '<span class="pill">مربوط</span>' : '<span class="pill">غير مربوط</span>'}</td>
+</tr>`
+        )
+        .join('');
+
+      res.send(
+        htmlPage(
+          'قائمة الطلاب',
+          `<div class="card">
+  <h2>قائمة الطلاب</h2>
+  <form method="get" action="/admin/students">
+    <div class="row">
+      <input name="q" value="${escapeHtml(q)}" placeholder="بحث بالاسم..." />
+      <input name="grade" value="${escapeHtml(grade)}" placeholder="تصفية بالصف (اختياري)" />
+      <button type="submit">بحث</button>
+      <a class="link" href="/admin/students">إعادة ضبط</a>
+    </div>
+  </form>
 </div>
 <div class="card">
-  <div class="muted">ملفات النتائج ستكون متاحة عبر <code>/files/results/...</code></div>
+  <div class="muted">إجمالي المعروض: ${(data || []).length} (حد أقصى 400)</div>
+  <div style="overflow:auto;margin-top:10px">
+    <table>
+      <thead><tr><th>الاسم</th><th>الهوية</th><th>الصف</th><th>الفصل</th><th>الربط</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="5">لا توجد نتائج</td></tr>'}</tbody>
+    </table>
+  </div>
 </div>`
-      )
-    );
+        )
+      );
+    } catch (e) {
+      res.status(500).send(String(e.message || e));
+    }
+  });
+
+  app.get('/admin/teachers', basicAuth, async (req, res) => {
+    try {
+      const q = String(req.query.q || '').trim();
+      const subject = String(req.query.subject || '').trim();
+      let query = supabase.from('teachers').select('id, name, subject, telegram_id, created_at');
+      if (q) query = query.ilike('name', `%${q}%`);
+      if (subject) query = query.eq('subject', subject);
+      const { data, error } = await query.order('name', { ascending: true }).limit(400);
+      if (error) throw error;
+
+      const rows = (data || [])
+        .map(
+          (t) => `<tr>
+  <td>${escapeHtml(t.name)}</td>
+  <td>${escapeHtml(t.subject || '—')}</td>
+  <td><code>${escapeHtml(t.telegram_id || '—')}</code></td>
+</tr>`
+        )
+        .join('');
+
+      res.send(
+        htmlPage(
+          'قائمة المعلمين',
+          `<div class="card">
+  <h2>قائمة المعلمين</h2>
+  <form method="get" action="/admin/teachers">
+    <div class="row">
+      <input name="q" value="${escapeHtml(q)}" placeholder="بحث بالاسم..." />
+      <input name="subject" value="${escapeHtml(subject)}" placeholder="تصفية بالمادة (اختياري)" />
+      <button type="submit">بحث</button>
+      <a class="link" href="/admin/teachers">إعادة ضبط</a>
+    </div>
+  </form>
+</div>
+<div class="card">
+  <div class="muted">إجمالي المعروض: ${(data || []).length} (حد أقصى 400)</div>
+  <div style="overflow:auto;margin-top:10px">
+    <table>
+      <thead><tr><th>اسم المعلم</th><th>المادة</th><th>Telegram ID</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="3">لا توجد نتائج</td></tr>'}</tbody>
+    </table>
+  </div>
+</div>`
+        )
+      );
+    } catch (e) {
+      res.status(500).send(String(e.message || e));
+    }
+  });
+
+  app.get('/admin/reviews', basicAuth, async (req, res) => {
+    try {
+      const q = String(req.query.q || '').trim();
+      const grade = String(req.query.grade || '').trim();
+      const subjectKey = String(req.query.subject_key || '').trim();
+      let query = supabase
+        .from('content_items')
+        .select('id, kind, grade, subject_key, title, source, created_at');
+      if (q) query = query.ilike('title', `%${q}%`);
+      if (grade) query = query.eq('grade', grade);
+      if (subjectKey) query = query.eq('subject_key', subjectKey);
+      const { data, error } = await query.order('created_at', { ascending: false }).limit(400);
+      if (error) throw error;
+
+      const rows = (data || [])
+        .map(
+          (r) => `<tr>
+  <td>${escapeHtml(r.title)}</td>
+  <td><span class="pill">${escapeHtml(r.kind)}</span></td>
+  <td>${escapeHtml(r.grade)}</td>
+  <td><code>${escapeHtml(r.subject_key)}</code></td>
+  <td>${escapeHtml(r.source)}</td>
+  <td>${escapeHtml(String(r.created_at || '').slice(0, 19).replace('T', ' '))}</td>
+</tr>`
+        )
+        .join('');
+
+      res.send(
+        htmlPage(
+          'قائمة المراجعات',
+          `<div class="card">
+  <h2>قائمة المراجعات/المحتوى</h2>
+  <form method="get" action="/admin/reviews">
+    <div class="row">
+      <input name="q" value="${escapeHtml(q)}" placeholder="بحث بالعنوان..." />
+      <input name="grade" value="${escapeHtml(grade)}" placeholder="الصف (اختياري)" />
+      <input name="subject_key" value="${escapeHtml(subjectKey)}" placeholder="subject_key (اختياري)" />
+      <button type="submit">بحث</button>
+      <a class="link" href="/admin/reviews">إعادة ضبط</a>
+    </div>
+  </form>
+</div>
+<div class="card">
+  <div class="muted">إجمالي المعروض: ${(data || []).length} (حد أقصى 400)</div>
+  <div style="overflow:auto;margin-top:10px">
+    <table>
+      <thead><tr><th>العنوان</th><th>النوع</th><th>الصف</th><th>المادة</th><th>المصدر</th><th>التاريخ</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="6">لا توجد نتائج</td></tr>'}</tbody>
+    </table>
+  </div>
+</div>`
+        )
+      );
+    } catch (e) {
+      res.status(500).send(String(e.message || e));
+    }
   });
 
   app.get('/admin/exams', basicAuth, (req, res) => {
