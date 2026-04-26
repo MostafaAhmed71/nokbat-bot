@@ -127,10 +127,14 @@ async function upsertTeachers(rows) {
 async function upsertStudents(rows) {
   const payload = rows
     .map((r) => ({
-      name: String(r.name || r.الاسم || '').trim(),
+      name: String(r.name || r.الاسم || r['اسم الطالب'] || '').trim(),
       national_id:
         normalizeNationalId(
-          r.national_id || r.nationalid || r.الهوية || r.رقم_الهوية
+          r.national_id ||
+            r.nationalid ||
+            r.الهوية ||
+            r.رقم_الهوية ||
+            r['رقم الهوية']
         ) || null,
       grade: String(r.grade || r.الصف || '').trim() || null,
       class: String(r.class || r.الفصل || '').trim() || null,
