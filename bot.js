@@ -1,4 +1,4 @@
-const { Telegraf, session } = require('telegraf');
+const { Telegraf, session, Markup } = require('telegraf');
 const {
   getTeacherByTelegramId,
   searchStudentsByName,
@@ -28,6 +28,13 @@ const {
 const { promptForNationalId, handleNationalIdText } = require('./handlers/results');
 const { askGemini, subjectLabel } = require('./services/gemini');
 const { ingestFile, searchLibrary } = require('./services/contentLibrary');
+const {
+  getStudentByTelegramId,
+  setStudentTelegramIdByNationalId,
+  getStudentByNationalId,
+  getParentByTelegramId,
+  linkParentToStudent,
+} = require('./services/supabase');
 const fs = require('fs');
 const path = require('path');
 
@@ -94,26 +101,58 @@ function buildBot() {
       );
     }
 
+    // ولي الأمر (لو مرتبط مسبقاً)
+    try {
+      const { data: parent } = await getParentByTelegramId(ctx.from.id);
+      if (parent?.students?.name) {
+        ctx.session.awaiting = null;
+        return ctx.reply(
+          `مرحباً بك.\n\nتم ربطك بالطالب: ${parent.students.name}\nاختر من القائمة:`,
+          Markup.keyboard([
+            [Markup.button.text('📊 نتيجة ابني'), Markup.button.text('📋 لجنة ابني')],
+            [Markup.button.text('📅 جدول امتحانات ابني')],
+            [Markup.button.text('🏠 القائمة الرئيسية')],
+          ]).resize()
+        );
+      }
+    } catch {
+      // ignore
+    }
+
+    // الطالب (لو مرتبط مسبقاً)
+    try {
+      const { data: s } = await getStudentByTelegramId(ctx.from.id);
+      if (s?.name) {
+        ctx.session.awaiting = null;
+        return ctx.reply(
+          `مرحباً ${s.name}.\n\nاختر خدمة من القائمة:`,
+          studentMainKeyboard()
+        );
+      }
+    } catch {
+      // ignore
+    }
+
+    // تسجيل جديد
+    ctx.session.awaiting = 'pick_role';
     return ctx.reply(
-      [
-        'مرحباً بك في بوت متوسطة وثانوية نخبة الشمال الأهلية.',
-        '',
-        'اختر خدمة من القائمة 👇',
-        '',
-        '✨ خدمات سريعة:',
-        '• 🤖 مساعد AI للمذاكرة (شرح + أمثلة + متابعة)',
-        '• 🧾 لجنّتي (رقم اللجنة + المكان)',
-        '• 🏁 نتيجتي (صورة/رابط النتيجة)',
-        '',
-        '💡 أمثلة لأسئلة مساعد AI:',
-        '• ما هو الرمز الكيميائي للأكسجين؟',
-        '• اشرح قانون فيثاغورس مع مثال',
-        '• أعطني معنى كلمة بالإنجليزي واستخدمها في جملة',
-        '',
-        'إذا احتجت شرح الاستخدام اضغط «ℹ️ المساعدة».',
-      ].join('\n'),
-      studentMainKeyboard()
+      'مرحباً بك.\n\nاختر نوع حسابك للمتابعة:',
+      Markup.inlineKeyboard([
+        [Markup.button.callback('👨‍🎓 أنا طالب', 'reg:role:student')],
+        [Markup.button.callback('👨‍👩‍👧 أنا ولي أمر', 'reg:role:parent')],
+      ])
     );
+  });
+
+  bot.action(/^reg:role:(student|parent)$/, async (ctx) => {
+    const role = ctx.match[1];
+    await ctx.answerCbQuery();
+    if (role === 'student') {
+      ctx.session.awaiting = 'reg_student_nid';
+      return ctx.reply('اكتب رقم الهوية/الإقامة للطالب للتسجيل.');
+    }
+    ctx.session.awaiting = 'reg_parent_child_nid';
+    return ctx.reply('اكتب رقم هوية/إقامة ابنك للربط كولي أمر.');
   });
 
   bot.hears(['🧾 لجنّتي', 'معرفة اللجنة'], async (ctx) => {
@@ -258,6 +297,42 @@ function buildBot() {
 
     if (isAdmin(ctx)) {
       return ctx.reply('استخدم /admin لفتح لوحة تحكم المدير.');
+    }
+
+    if (ctx.session.awaiting === 'reg_student_nid') {
+      const { data: student, error } = await getStudentByNationalId(txt);
+      if (error) return ctx.reply('تعذر التحقق حالياً. حاول لاحقاً.');
+      if (!student) return ctx.reply('لم يتم العثور على طالب بهذا الرقم. تأكد من الهوية.');
+      const { data: updated, error: upErr } = await setStudentTelegramIdByNationalId(
+        txt,
+        ctx.from.id
+      );
+      if (upErr || !updated) return ctx.reply('تعذر إتمام التسجيل. حاول لاحقاً.');
+      ctx.session.awaiting = null;
+      return ctx.reply(
+        `تم تسجيلك بنجاح يا ${updated.name}.\n\nاختر خدمة من القائمة:`,
+        studentMainKeyboard()
+      );
+    }
+
+    if (ctx.session.awaiting === 'reg_parent_child_nid') {
+      const { data: student, error } = await getStudentByNationalId(txt);
+      if (error) return ctx.reply('تعذر التحقق حالياً. حاول لاحقاً.');
+      if (!student) return ctx.reply('لم يتم العثور على طالب بهذا الرقم. تأكد من الهوية.');
+      const { data: link, error: lErr } = await linkParentToStudent({
+        parentTelegramId: ctx.from.id,
+        studentId: student.id,
+      });
+      if (lErr || !link) return ctx.reply('تعذر إتمام الربط. حاول لاحقاً.');
+      ctx.session.awaiting = null;
+      return ctx.reply(
+        `تم ربطك بولي أمر للطالب: ${student.name}\nاختر من القائمة:`,
+        Markup.keyboard([
+          [Markup.button.text('📊 نتيجة ابني'), Markup.button.text('📋 لجنة ابني')],
+          [Markup.button.text('📅 جدول امتحانات ابني')],
+          [Markup.button.text('🏠 القائمة الرئيسية')],
+        ]).resize()
+      );
     }
 
     if (ctx.session.awaiting === 'student_result') {

@@ -13,6 +13,7 @@ create table if not exists public.students (
   committee_location text,
   result_image_url text,
   result_updated_at timestamptz,
+  telegram_id text,
   created_at timestamptz default now()
 );
 
@@ -48,6 +49,9 @@ create index if not exists idx_schedule_teacher_day on public.schedule (teacher_
 create unique index if not exists students_national_id_unique
   on public.students (national_id);
 
+create index if not exists idx_students_telegram_id
+  on public.students (telegram_id);
+
 -- مكتبة المنهج والمراجعات
 create table if not exists public.content_items (
   id uuid primary key default uuid_generate_v4(),
@@ -75,3 +79,11 @@ create index if not exists idx_content_items_grade_subject
 
 create index if not exists idx_content_chunks_item_order
   on public.content_chunks (item_id, chunk_order);
+
+-- أولياء الأمور
+create table if not exists public.parents (
+  id uuid primary key default uuid_generate_v4(),
+  telegram_id text not null unique,
+  student_id uuid references public.students (id) on delete cascade,
+  created_at timestamptz default now()
+);

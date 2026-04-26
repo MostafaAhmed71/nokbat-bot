@@ -85,6 +85,60 @@ async function getStudentByNationalId(nationalId) {
   return { data, error };
 }
 
+async function getStudentByTelegramId(telegramId) {
+  const client = requireClient();
+  const id = String(telegramId || '').trim();
+  if (!id) return { data: null, error: null };
+  const { data, error } = await client
+    .from('students')
+    .select('*')
+    .eq('telegram_id', id)
+    .maybeSingle();
+  return { data, error };
+}
+
+async function setStudentTelegramIdByNationalId(nationalId, telegramId) {
+  const client = requireClient();
+  const nid = normalizeNationalId(nationalId);
+  if (!nid) return { data: null, error: null };
+  const tg = String(telegramId || '').trim();
+  if (!tg) return { data: null, error: null };
+
+  const { data, error } = await client
+    .from('students')
+    .update({ telegram_id: tg })
+    .eq('national_id', nid)
+    .select('*')
+    .maybeSingle();
+  return { data, error };
+}
+
+async function getParentByTelegramId(telegramId) {
+  const client = requireClient();
+  const id = String(telegramId || '').trim();
+  if (!id) return { data: null, error: null };
+  const { data, error } = await client
+    .from('parents')
+    .select('id, telegram_id, student_id, students:student_id(*)')
+    .eq('telegram_id', id)
+    .maybeSingle();
+  return { data, error };
+}
+
+async function linkParentToStudent({ parentTelegramId, studentId }) {
+  const client = requireClient();
+  const tg = String(parentTelegramId || '').trim();
+  const sid = String(studentId || '').trim();
+  if (!tg || !sid) return { data: null, error: null };
+
+  const { data, error } = await client
+    .from('parents')
+    .upsert([{ telegram_id: tg, student_id: sid }], { onConflict: 'telegram_id' })
+    .select('*')
+    .maybeSingle();
+  return { data, error };
+}
+
 async function setStudentResultImageUrlByNationalId(nationalId, url) {
   const client = requireClient();
   const nid = normalizeNationalId(nationalId);
@@ -229,8 +283,12 @@ module.exports = {
   searchStudentsByName,
   getStudentById,
   getStudentByNationalId,
+  getStudentByTelegramId,
+  setStudentTelegramIdByNationalId,
   setStudentResultImageUrlByNationalId,
   getTeacherByTelegramId,
+  getParentByTelegramId,
+  linkParentToStudent,
   listTeachers,
   listStudentsPage,
   getScheduleForTeacherOnDay,
