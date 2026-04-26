@@ -125,31 +125,54 @@ async function upsertTeachers(rows) {
 }
 
 async function upsertStudents(rows) {
-  const payload = rows
-    .map((r) => ({
-      name: String(r.name || r.الاسم || r['اسم الطالب'] || '').trim(),
-      national_id:
-        normalizeNationalId(
-          r.national_id ||
-            r.nationalid ||
-            r.الهوية ||
-            r.رقم_الهوية ||
-            r['رقم الهوية']
-        ) || null,
+  const rejected = [];
+  const payload = [];
+
+  for (const r of rows || []) {
+    const name = String(r.name || r.الاسم || r['اسم الطالب'] || '').trim();
+    const rawNational =
+      r.national_id ||
+      r.nationalid ||
+      r.الهوية ||
+      r.رقم_الهوية ||
+      r['رقم الهوية'] ||
+      '';
+    const national_id = normalizeNationalId(rawNational) || null;
+
+    if (!name) {
+      rejected.push({
+        name: '—',
+        rawNational: String(rawNational || '').trim(),
+        reason: 'اسم الطالب مفقود',
+      });
+      continue;
+    }
+    if (!national_id) {
+      rejected.push({
+        name,
+        rawNational: String(rawNational || '').trim(),
+        reason: 'رقم الهوية غير صالح بعد التنظيف',
+      });
+      continue;
+    }
+
+    payload.push({
+      name,
+      national_id,
       grade: String(r.grade || r.الصف || '').trim() || null,
       class: String(r.class || r.الفصل || '').trim() || null,
       committee_number:
         String(r.committee_number || r.رقم_اللجنة || '').trim() || null,
       committee_location:
         String(r.committee_location || r.مكان_اللجنة || '').trim() || null,
-    }))
-    .filter((x) => x.name && x.national_id);
+    });
+  }
 
   const { error } = await supabase
     .from('students')
     .upsert(payload, { onConflict: 'national_id' });
   if (error) throw error;
-  return payload.length;
+  return { accepted: payload.length, rejected };
 }
 
 async function replaceSchedule(rows) {
@@ -544,19 +567,56 @@ function main() {
 
       const rows = readFirstSheetRows(req.file.path);
       let count = 0;
+      let rejected = [];
       if (kind === 'teachers') count = await upsertTeachers(rows);
-      else if (kind === 'students') count = await upsertStudents(rows);
+      else if (kind === 'students') {
+        const out = await upsertStudents(rows);
+        count = out.accepted || 0;
+        rejected = out.rejected || [];
+      }
       else if (kind === 'schedule') {
         count = replace ? await replaceSchedule(rows) : await insertSchedule(rows);
       } else {
         return res.status(400).send('invalid kind');
       }
 
+      const rejectedHtml =
+        kind === 'students' && rejected.length
+          ? `<div class="card">
+  <h3>صفوف لم يتم استيرادها (${rejected.length})</h3>
+  <div class="muted">الأسباب الشائعة: رقم هوية غير صالح (رموز/مسافات/صيغة مختلفة).</div>
+  <div style="overflow:auto;margin-top:10px">
+    <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%;min-width:650px">
+      <thead>
+        <tr>
+          <th>الاسم</th>
+          <th>رقم الهوية (كما في الملف)</th>
+          <th>السبب</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rejected
+          .slice(0, 200)
+          .map(
+            (r) => `<tr>
+          <td>${escapeHtml(r.name)}</td>
+          <td>${escapeHtml(r.rawNational)}</td>
+          <td>${escapeHtml(r.reason)}</td>
+        </tr>`
+          )
+          .join('')}
+      </tbody>
+    </table>
+  </div>
+</div>`
+          : '';
+
       res.send(
         htmlPage(
           'تم',
           `<h2>تم الاستيراد</h2>
-<div class="card">تمت معالجة <b>${count}</b> صف/سطر.</div>
+<div class="card">تم استيراد <b>${count}</b> صف/سطر.</div>
+${rejectedHtml}
 <div class="card"><a href="/admin/import">رجوع</a></div>`
         )
       );
