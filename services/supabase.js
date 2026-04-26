@@ -278,6 +278,82 @@ async function listContentChunksForGradeSubject(grade, subjectKey) {
   return { data: rows, error };
 }
 
+async function upsertExamsSchedule(rows) {
+  const client = requireClient();
+  const payload = (rows || [])
+    .map((r) => ({
+      grade: String(r.grade || r.الصف || '').trim(),
+      subject: String(r.subject || r.المادة || '').trim(),
+      exam_date: String(r.exam_date || r.date || r.التاريخ || '').trim(),
+      exam_time: String(r.exam_time || r.time || r.الوقت || '').trim() || null,
+    }))
+    .filter((x) => x.grade && x.subject && x.exam_date);
+
+  if (!payload.length) return { data: [], error: null };
+  const { data, error } = await client
+    .from('exams_schedule')
+    .upsert(payload, { onConflict: 'grade,subject,exam_date' })
+    .select('*');
+  return { data: data || [], error };
+}
+
+async function listExamsForGrade(grade, fromDateISO) {
+  const client = requireClient();
+  const g = String(grade || '').trim();
+  if (!g) return { data: [], error: null };
+  const from = String(fromDateISO || '').trim();
+  let q = client
+    .from('exams_schedule')
+    .select('id, grade, subject, exam_date, exam_time')
+    .eq('grade', g)
+    .order('exam_date', { ascending: true });
+  if (from) q = q.gte('exam_date', from);
+  const { data, error } = await q.limit(30);
+  return { data: data || [], error };
+}
+
+async function listExamsOnDate(dateISO) {
+  const client = requireClient();
+  const d = String(dateISO || '').trim();
+  if (!d) return { data: [], error: null };
+  const { data, error } = await client
+    .from('exams_schedule')
+    .select('id, grade, subject, exam_date, exam_time')
+    .eq('exam_date', d)
+    .order('grade', { ascending: true })
+    .order('subject', { ascending: true });
+  return { data: data || [], error };
+}
+
+async function listStudentTelegramIdsByGrade(grade) {
+  const client = requireClient();
+  const g = String(grade || '').trim();
+  if (!g) return { data: [], error: null };
+  const { data, error } = await client
+    .from('students')
+    .select('telegram_id')
+    .eq('grade', g)
+    .not('telegram_id', 'is', null);
+  const ids = (data || [])
+    .map((r) => String(r.telegram_id || '').trim())
+    .filter(Boolean);
+  return { data: ids, error };
+}
+
+async function listParentTelegramIdsByStudentGrade(grade) {
+  const client = requireClient();
+  const g = String(grade || '').trim();
+  if (!g) return { data: [], error: null };
+  const { data, error } = await client
+    .from('parents')
+    .select('telegram_id, students:student_id(grade)')
+    .eq('students.grade', g);
+  const ids = (data || [])
+    .map((r) => String(r.telegram_id || '').trim())
+    .filter(Boolean);
+  return { data: ids, error };
+}
+
 module.exports = {
   supabase,
   searchStudentsByName,
@@ -289,6 +365,11 @@ module.exports = {
   getTeacherByTelegramId,
   getParentByTelegramId,
   linkParentToStudent,
+  upsertExamsSchedule,
+  listExamsForGrade,
+  listExamsOnDate,
+  listStudentTelegramIdsByGrade,
+  listParentTelegramIdsByStudentGrade,
   listTeachers,
   listStudentsPage,
   getScheduleForTeacherOnDay,

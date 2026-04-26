@@ -1,6 +1,7 @@
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 const { buildBot } = require('./bot');
+const { startExamsCron } = require('./services/examsCron');
 
 async function main() {
   const bot = buildBot();
@@ -13,6 +14,7 @@ async function main() {
   process.once('SIGTERM', stop);
 
   await bot.launch();
+  startExamsCron(bot);
   // eslint-disable-next-line no-console
   console.log('nokbat_alshamal_bot يعمل الآن');
 }

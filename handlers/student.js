@@ -23,6 +23,7 @@ function studentMainKeyboard() {
   return Markup.keyboard([
     [Markup.button.text('🤖 اسأل مساعد AI')],
     [Markup.button.text('🧪 اختبار سريع')],
+    [Markup.button.text('📅 جدول الامتحانات')],
     [Markup.button.text('🧾 لجنّتي'), Markup.button.text('🏁 نتيجتي')],
     [Markup.button.text('⚙️ الإعدادات')],
     [Markup.button.text('ℹ️ المساعدة'), Markup.button.text('🏠 القائمة الرئيسية')],

@@ -9,6 +9,7 @@ const XLSX = require('xlsx');
 const {
   supabase,
   setStudentResultImageUrlByNationalId,
+  upsertExamsSchedule,
 } = require('../services/supabase');
 const { ingestFile } = require('../services/contentLibrary');
 const { normalizeNationalId } = require('../utils/nationalId');
@@ -222,6 +223,8 @@ function main() {
     <a href="/admin/manual">إدخال يدوي</a>
     <span class="muted">|</span>
     <a href="/admin/library">مكتبة المنهج والمراجعات</a>
+    <span class="muted">|</span>
+    <a href="/admin/exams">جدول الامتحانات</a>
   </div>
 </div>
 <div class="card">
@@ -229,6 +232,48 @@ function main() {
 </div>`
       )
     );
+  });
+
+  app.get('/admin/exams', basicAuth, (req, res) => {
+    res.send(
+      htmlPage(
+        'جدول الامتحانات',
+        `<h2>رفع جدول الامتحانات</h2>
+<div class="card">
+  <form method="post" action="/admin/exams" enctype="multipart/form-data">
+    <div class="row">
+      <input type="file" name="file" accept=".xlsx,.xls" required />
+      <button type="submit">رفع واستيراد</button>
+    </div>
+    <p class="muted">الأعمدة المطلوبة: <code>grade</code>, <code>subject</code>, <code>exam_date</code>, <code>exam_time</code> (يمكن بالعربي: الصف، المادة، التاريخ، الوقت).</p>
+  </form>
+</div>
+<div class="card"><a href="/admin">رجوع</a></div>`
+      )
+    );
+  });
+
+  app.post('/admin/exams', basicAuth, uploadTmp.single('file'), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).send('file is required');
+      const rows = readFirstSheetRows(req.file.path);
+      const { data, error } = await upsertExamsSchedule(rows);
+      if (error) throw error;
+      return res.send(
+        htmlPage(
+          'تم',
+          `<h2>تم رفع جدول الامتحانات</h2>
+<div class="card">تمت معالجة <b>${(data || []).length}</b> صف/سطر.</div>
+<div class="card"><a href="/admin/exams">رفع ملف آخر</a></div>`
+        )
+      );
+    } catch (e) {
+      return res.status(500).send(String(e.message || e));
+    } finally {
+      if (req.file?.path && fs.existsSync(req.file.path)) {
+        fs.rm(req.file.path, { force: true }, () => {});
+      }
+    }
   });
 
   app.get('/admin/library', basicAuth, (req, res) => {

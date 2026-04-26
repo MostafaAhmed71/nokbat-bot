@@ -35,6 +35,7 @@ const {
   getParentByTelegramId,
   linkParentToStudent,
 } = require('./services/supabase');
+const { listExamsForGrade } = require('./services/supabase');
 const fs = require('fs');
 const path = require('path');
 
@@ -141,6 +142,57 @@ function buildBot() {
         [Markup.button.callback('👨‍🎓 أنا طالب', 'reg:role:student')],
         [Markup.button.callback('👨‍👩‍👧 أنا ولي أمر', 'reg:role:parent')],
       ])
+    );
+  });
+
+  function gradeKeyToLabel(gradeKey) {
+    const gradeMap = {
+      m1: 'أول متوسط',
+      m2: 'ثاني متوسط',
+      m3: 'ثالث متوسط',
+      s1: 'أول ثانوي',
+      s2: 'ثاني ثانوي',
+      s3: 'ثالث ثانوي',
+    };
+    return gradeMap[String(gradeKey || '')] || null;
+  }
+
+  function formatExams(rows) {
+    if (!rows.length) return 'لا يوجد جدول امتحانات مسجل حالياً.';
+    return rows
+      .map(
+        (r) =>
+          `• ${r.exam_date} — ${r.subject}${r.exam_time ? ` — ${r.exam_time}` : ''}`
+      )
+      .join('\n');
+  }
+
+  bot.hears('📅 جدول الامتحانات', async (ctx) => {
+    if (isAdmin(ctx)) return ctx.reply('هذا الخيار مخصص للطلاب.');
+    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
+    if (teacher) return ctx.reply('هذا الخيار مخصص للطلاب.');
+
+    const grade = gradeKeyToLabel(ctx.session?.student?.gradeKey);
+    if (!grade) {
+      ctx.session.awaiting = 'student_pick_grade';
+      return ctx.reply('اختر صفّك الدراسي أولاً:', gradesKeyboard('grade:set'));
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const { data, error } = await listExamsForGrade(grade, today);
+    if (error) return ctx.reply('تعذر جلب جدول الامتحانات حالياً.');
+    return ctx.reply(`📅 جدول الامتحانات — ${grade}\n\n${formatExams(data || [])}`);
+  });
+
+  bot.hears('📅 جدول امتحانات ابني', async (ctx) => {
+    const { data: parent } = await getParentByTelegramId(ctx.from.id);
+    if (!parent?.students?.grade) {
+      return ctx.reply('لم يتم ربطك بولي أمر بعد. اكتب /start ثم اختر ولي أمر.');
+    }
+    const today = new Date().toISOString().slice(0, 10);
+    const { data, error } = await listExamsForGrade(parent.students.grade, today);
+    if (error) return ctx.reply('تعذر جلب جدول الامتحانات حالياً.');
+    return ctx.reply(
+      `📅 جدول امتحانات ${parent.students.name}\n\n${formatExams(data || [])}`
     );
   });
 
