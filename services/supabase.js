@@ -354,6 +354,54 @@ async function listParentTelegramIdsByStudentGrade(grade) {
   return { data: ids, error };
 }
 
+async function listAllStudentTelegramIds() {
+  const client = requireClient();
+  const { data, error } = await client
+    .from('students')
+    .select('telegram_id')
+    .not('telegram_id', 'is', null);
+  const ids = (data || [])
+    .map((r) => String(r.telegram_id || '').trim())
+    .filter(Boolean);
+  return { data: ids, error };
+}
+
+async function listAllTeacherTelegramIds() {
+  const client = requireClient();
+  const { data, error } = await client
+    .from('teachers')
+    .select('telegram_id')
+    .not('telegram_id', 'is', null);
+  const ids = (data || [])
+    .map((r) => String(r.telegram_id || '').trim())
+    .filter(Boolean);
+  return { data: ids, error };
+}
+
+async function listAllParentTelegramIds() {
+  const client = requireClient();
+  const { data, error } = await client.from('parents').select('telegram_id');
+  const ids = (data || [])
+    .map((r) => String(r.telegram_id || '').trim())
+    .filter(Boolean);
+  return { data: ids, error };
+}
+
+async function createAnnouncement({ message, target }) {
+  const client = requireClient();
+  const payload = {
+    message: String(message || '').trim(),
+    target: String(target || '').trim(),
+    sent_at: new Date().toISOString(),
+  };
+  const { data, error } = await client
+    .from('announcements')
+    .insert([payload])
+    .select('*')
+    .maybeSingle();
+  return { data, error };
+}
+
 module.exports = {
   supabase,
   searchStudentsByName,
@@ -370,6 +418,10 @@ module.exports = {
   listExamsOnDate,
   listStudentTelegramIdsByGrade,
   listParentTelegramIdsByStudentGrade,
+  listAllStudentTelegramIds,
+  listAllTeacherTelegramIds,
+  listAllParentTelegramIds,
+  createAnnouncement,
   listTeachers,
   listStudentsPage,
   getScheduleForTeacherOnDay,
