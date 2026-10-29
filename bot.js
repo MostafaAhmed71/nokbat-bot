@@ -12,9 +12,14 @@ const {
   handleAdminDocument,
   handleAdminPhoto,
 } = require('./handlers/admin');
-const { teacherMainKeyboard, handleTeacherText } = require('./handlers/teacher');
+const {
+  teacherMainKeyboard,
+  handleTeacherText,
+  sendTeacherUploadList,
+} = require('./handlers/teacher');
 const {
   formatStudentCommittee,
+  parentMainKeyboard,
   studentMainKeyboard,
   aiSubjectsKeyboard,
   quizSubjectsKeyboard,
@@ -30,6 +35,10 @@ const {
 const { promptForNationalId, handleNationalIdText } = require('./handlers/results');
 const { askGemini, subjectLabel } = require('./services/gemini');
 const { ingestFile, searchLibrary } = require('./services/contentLibrary');
+const { inferExtFromMime } = require('./services/extractText');
+
+/** حد تنزيل الملفات عبر Bot API (تيليجرام لا يسمح للبوت بتنزيل ما يزيد عن ~20 ميجا) */
+const TELEGRAM_BOT_MAX_FILE_BYTES = 20 * 1024 * 1024;
 const {
   getStudentByTelegramId,
   setStudentTelegramIdByNationalId,
@@ -48,6 +57,19 @@ const fs = require('fs');
 const path = require('path');
 const { extractJsonObject } = require('./utils/jsonExtract');
 const { registerDiagnosticChallenge } = require('./handlers/diagnosticChallenge');
+
+function loadRegisterPlatformContent() {
+  try {
+    return require('./handlers/platformContent').registerPlatformContent;
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[nokbat] ملف handlers/platformContent.js غير موجود — لن يعمل زر «محتوى المنصّة». أنسخ الملفات من المشروع الكامل.',
+      e.message
+    );
+    return null;
+  }
+}
 
 function buildBot() {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -90,6 +112,25 @@ function buildBot() {
   registerAdmin(bot);
   registerDiagnosticChallenge(bot);
 
+  /** تخزين مؤقت قصير لتقليل استدعاءات getTeacherByTelegramId على كل رسالة */
+  const TEACHER_CACHE_MS = 90000;
+  async function getTeacherCached(ctx) {
+    const uid = String(ctx.from?.id ?? '');
+    const now = Date.now();
+    const c = ctx.session._teacherCache;
+    if (c && c.userId === uid && now - c.at < TEACHER_CACHE_MS) {
+      return c.teacher;
+    }
+    const { data } = await getTeacherByTelegramId(ctx.from.id);
+    ctx.session._teacherCache = { userId: uid, at: now, teacher: data || null };
+    return data;
+  }
+
+  const registerPlatformContent = loadRegisterPlatformContent();
+  if (registerPlatformContent) {
+    registerPlatformContent(bot, { getTeacherByTelegramId: getTeacherCached });
+  }
+
   bot.command(['myid', 'معرف'], async (ctx) => {
     const id = ctx.from.id;
     return ctx.reply(
@@ -100,64 +141,93 @@ function buildBot() {
     );
   });
 
-  bot.start(async (ctx) => {
-    if (isAdmin(ctx)) {
-      return ctx.reply(
-        'مرحباً بك في لوحة المدير.\n\nاستخدم /admin لفتح لوحة التحكم.'
-      );
-    }
-
-    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
-    if (teacher) {
-      ctx.session.awaiting = null;
-      return ctx.reply(
-        `مرحباً ${teacher.name}.\n\nاختر من القائمة:`,
-        teacherMainKeyboard()
-      );
-    }
-
-    // ولي الأمر (لو مرتبط مسبقاً)
+  /** استقبال المحادثة: /start أو كلمة بدء؛ يحمي من تعطل السحاب أو غياب الإعدادات */
+  async function routePrivateWelcome(ctx) {
     try {
-      const { data: parent } = await getParentByTelegramId(ctx.from.id);
-      if (parent?.students?.name) {
-        ctx.session.awaiting = null;
+      if (ctx.chat && ctx.chat.type !== 'private') {
         return ctx.reply(
-          `مرحباً بك.\n\nتم ربطك بالطالب: ${parent.students.name}\nاختر من القائمة:`,
-          Markup.keyboard([
-            [Markup.button.text('📊 نتيجة ابني'), Markup.button.text('📋 لجنة ابني')],
-            [Markup.button.text('📅 جدول امتحانات ابني')],
-            [Markup.button.text('🏠 القائمة الرئيسية')],
-          ]).resize()
+          'الرجاء فتح المحادثة الخاصة مع البوت، ثم اضغط /start أو اكتب كلمة «ابدأ».'
         );
       }
-    } catch {
-      // ignore
-    }
 
-    // الطالب (لو مرتبط مسبقاً)
-    try {
-      const { data: s } = await getStudentByTelegramId(ctx.from.id);
-      if (s?.name) {
-        ctx.session.awaiting = null;
+      if (isAdmin(ctx)) {
         return ctx.reply(
-          `مرحباً ${s.name}.\n\nاختر خدمة من القائمة:`,
-          studentMainKeyboard()
+          'مرحباً بك في لوحة المدير.\n\nاستخدم /admin لفتح لوحة التحكم.'
         );
       }
-    } catch {
-      // ignore
-    }
 
-    // تسجيل جديد
-    ctx.session.awaiting = 'pick_role';
-    return ctx.reply(
-      'مرحباً بك.\n\nاختر نوع حسابك للمتابعة:',
-      Markup.inlineKeyboard([
-        [Markup.button.callback('👨‍🎓 أنا طالب', 'reg:role:student')],
-        [Markup.button.callback('👨‍👩‍👧 أنا ولي أمر', 'reg:role:parent')],
-      ])
-    );
-  });
+      let teacher;
+      try {
+        const r = await getTeacherByTelegramId(ctx.from.id);
+        teacher = r?.data;
+      } catch (e) {
+        // غالباً: Supabase غير مهيأ (requireClient) أو انقطاع شديد
+        // eslint-disable-next-line no-console
+        console.error('start:getTeacher', e);
+        return ctx.reply(
+          'تعذر الاتصال بقاعدة البيانات.\n' +
+            'تحقّق أن السيرفر يملك في .env:\n' +
+            'SUPABASE_URL و SUPABASE_ANON_KEY أو SUPABASE_SERVICE_ROLE_KEY\n\n' +
+            'ثم استخدم على السيرفر: pm2 restart nokbat_alshamal_bot --update-env'
+        );
+      }
+      if (teacher) {
+        ctx.session.awaiting = null;
+        return ctx.reply(
+          `مرحباً ${teacher.name}.\n\nاختر من القائمة:`,
+          teacherMainKeyboard()
+        );
+      }
+
+      // ولي الأمر (لو مرتبط مسبقاً)
+      try {
+        const { data: parent } = await getParentByTelegramId(ctx.from.id);
+        if (parent?.students?.name) {
+          ctx.session.awaiting = null;
+          return ctx.reply(
+            `مرحباً بك.\n\nتم ربطك بالطالب: ${parent.students.name}\nاختر من القائمة:`,
+            parentMainKeyboard()
+          );
+        }
+      } catch {
+        // ignore
+      }
+
+      // الطالب (لو مرتبط مسبقاً)
+      try {
+        const { data: s } = await getStudentByTelegramId(ctx.from.id);
+        if (s?.name) {
+          ctx.session.awaiting = null;
+          return ctx.reply(
+            `مرحباً ${s.name}.\n\nاختر خدمة من القائمة:`,
+            studentMainKeyboard()
+          );
+        }
+      } catch {
+        // ignore
+      }
+
+      // تسجيل جديد
+      ctx.session.awaiting = 'pick_role';
+      return ctx.reply(
+        'مرحباً بك.\n\nاختر نوع حسابك للمتابعة:',
+        Markup.inlineKeyboard([
+          [Markup.button.callback('👨‍🎓 أنا طالب', 'reg:role:student')],
+          [Markup.button.callback('👨‍👩‍👧 أنا ولي أمر', 'reg:role:parent')],
+        ])
+      );
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error('routePrivateWelcome', e);
+      return ctx.reply(
+        'حدث خطأ أثناء البدء. جرّب /start أو التواصل مع الإدارة.'
+      );
+    }
+  }
+
+  bot.start(routePrivateWelcome);
+  // زر أو نص «بدء/ابدأ» بدون ضرورة كتابة /start صراحة
+  bot.hears([/^\s*(ابدأ|ابداء|بدء|بدأ)(\s|$)/iu, /^🚀\s*بدء$/], routePrivateWelcome);
 
   function gradeKeyToLabel(gradeKey) {
     const gradeMap = {
@@ -194,7 +264,10 @@ function buildBot() {
     const today = new Date().toISOString().slice(0, 10);
     const { data, error } = await listExamsForGrade(grade, today);
     if (error) return ctx.reply('تعذر جلب جدول الامتحانات حالياً.');
-    return ctx.reply(`📅 جدول الامتحانات — ${grade}\n\n${formatExams(data || [])}`);
+    const body = `📅 جدول الامتحانات — ${grade}\n\n${formatExams(data || [])}`;
+    const hint =
+      '\n\nيمكنك أيضاً فتح «🌐 محتوى المنصّة التعليمية» ثم «📅 جدول من المنصة» لعرض الجداول كصور/ملفات كما رفعتها الإدارة.';
+    return ctx.reply(body + hint);
   });
 
   bot.hears('📅 جدول امتحانات ابني', async (ctx) => {
@@ -206,7 +279,8 @@ function buildBot() {
     const { data, error } = await listExamsForGrade(parent.students.grade, today);
     if (error) return ctx.reply('تعذر جلب جدول الامتحانات حالياً.');
     return ctx.reply(
-      `📅 جدول امتحانات ${parent.students.name}\n\n${formatExams(data || [])}`
+      `📅 جدول امتحانات ${parent.students.name}\n\n${formatExams(data || [])}\n\n` +
+        '🌐 لجداول الصور من المنصّة: «محتوى المنصة (ابني)» ← «جدول من المنصة».'
     );
   });
 
@@ -352,7 +426,11 @@ function buildBot() {
       return handleAdminText(ctx);
     }
 
-    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
+    if (isAdmin(ctx)) {
+      return ctx.reply('استخدم /admin لفتح لوحة تحكم المدير.');
+    }
+
+    const { data: teacher } = await getTeacherCached(ctx);
     if (teacher) {
       // تدفق رفع المراجعة للمعلم (لأن handleTeacherText له fallback عام)
       if (txt === '📤 رفع مراجعة') {
@@ -360,16 +438,19 @@ function buildBot() {
         ctx.session.awaiting = 'tch_upload_pick_grade';
         return ctx.reply('اختر الصف لهذه المراجعة:', gradesKeyboard('tch:grade'));
       }
+      if (txt === '📋 مراجعاتي المرفوعة') {
+        return sendTeacherUploadList(ctx);
+      }
       return handleTeacherText(ctx, teacher);
-    }
-
-    if (isAdmin(ctx)) {
-      return ctx.reply('استخدم /admin لفتح لوحة تحكم المدير.');
     }
 
     if (ctx.session.awaiting === 'reg_student_nid') {
       const { data: student, error } = await getStudentByNationalId(txt);
-      if (error) return ctx.reply('تعذر التحقق حالياً. حاول لاحقاً.');
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error('reg_student_nid getStudentByNationalId', error);
+        return ctx.reply('تعذر التحقق حالياً. حاول لاحقاً.');
+      }
       if (!student) return ctx.reply('لم يتم العثور على طالب بهذا الرقم. تأكد من الهوية.');
       const { data: updated, error: upErr } = await setStudentTelegramIdByNationalId(
         txt,
@@ -385,7 +466,11 @@ function buildBot() {
 
     if (ctx.session.awaiting === 'reg_parent_child_nid') {
       const { data: student, error } = await getStudentByNationalId(txt);
-      if (error) return ctx.reply('تعذر التحقق حالياً. حاول لاحقاً.');
+      if (error) {
+        // eslint-disable-next-line no-console
+        console.error('reg_parent_child_nid getStudentByNationalId', error);
+        return ctx.reply('تعذر التحقق حالياً. حاول لاحقاً.');
+      }
       if (!student) return ctx.reply('لم يتم العثور على طالب بهذا الرقم. تأكد من الهوية.');
       const { data: link, error: lErr } = await linkParentToStudent({
         parentTelegramId: ctx.from.id,
@@ -395,16 +480,19 @@ function buildBot() {
       ctx.session.awaiting = null;
       return ctx.reply(
         `تم ربطك بولي أمر للطالب: ${student.name}\nاختر من القائمة:`,
-        Markup.keyboard([
-          [Markup.button.text('📊 نتيجة ابني'), Markup.button.text('📋 لجنة ابني')],
-          [Markup.button.text('📅 جدول امتحانات ابني')],
-          [Markup.button.text('🏠 القائمة الرئيسية')],
-        ]).resize()
+        parentMainKeyboard()
       );
     }
 
     if (ctx.session.awaiting === 'student_result') {
       return handleNationalIdText(ctx, txt);
+    }
+
+    if (ctx.session.awaiting === 'student_pick_grade') {
+      return ctx.reply(
+        'اضغط زر الصف من الرسالة السابقة، أو افتح ⚙️ الإعدادات واختر الصف من هناك.',
+        gradesKeyboard('grade:set')
+      );
     }
 
     if (ctx.session.awaiting === 'ai_question') {
@@ -414,6 +502,7 @@ function buildBot() {
       const gradeKey = ctx.session?.student?.gradeKey;
       // نبقي وضع الـ AI فعّال للأسئلة المتتابعة حتى يرجع المستخدم للقائمة
       try {
+        await ctx.sendChatAction('typing').catch(() => {});
         const history = Array.isArray(ctx.session?.ai?.history)
           ? ctx.session.ai.history
           : [];
@@ -432,7 +521,7 @@ function buildBot() {
                 grade,
                 subjectKey,
                 query: txt,
-                topK: 5,
+                topK: 4,
               })
             : [];
         ctx.session.ai = ctx.session.ai || {};
@@ -487,11 +576,22 @@ function buildBot() {
       return undefined;
     }
 
+    // بحث اللجنة فقط بعد الضغط على «لجنّتي» — يقلّل ضغط قاعدة البيانات والبطء الظاهر
+    if (ctx.session.awaiting !== 'student_committee') {
+      return ctx.reply(
+        'لم أفهم الرسالة.\n\n' +
+          '• للّجنة: اضغط «🧾 لجنّتي» ثم اكتب اسمك كما في السجل.\n' +
+          '• أو اختر خدمة من الأزرار في الأسفل.\n' +
+          '• ولي أمر: استخدم أزرار القائمة المخصصة لك.'
+      );
+    }
+
     const { data, error } = await searchStudentsByName(txt);
     if (error) {
       return ctx.reply('تعذر البحث حالياً. حاول لاحقاً.');
     }
     if (!data.length) {
+      ctx.session.awaiting = 'student_committee';
       return ctx.reply(
         'لم يتم العثور على اسمك، تأكد من الاسم أو تواصل مع الإدارة.',
         studentMainKeyboard()
@@ -501,6 +601,7 @@ function buildBot() {
       ctx.session.awaiting = null;
       return ctx.reply(formatStudentCommittee(data[0]), studentMainKeyboard());
     }
+    ctx.session.awaiting = null;
     return ctx.reply(
       'وجدنا أكثر من تطابق. اختر اسمك من القائمة:',
       studentPickKeyboard(data)
@@ -634,6 +735,12 @@ function buildBot() {
     return ctx.reply('اختر الصف لهذه المراجعة:', gradesKeyboard('tch:grade'));
   });
 
+  bot.hears('📋 مراجعاتي المرفوعة', async (ctx) => {
+    const { data: teacher } = await getTeacherByTelegramId(ctx.from.id);
+    if (!teacher) return;
+    return sendTeacherUploadList(ctx);
+  });
+
   bot.action(/^tch:grade:(m1|m2|m3|s1|s2|s3)$/, async (ctx) => {
     await ctx.answerCbQuery();
     ctx.session.upload = ctx.session.upload || { kind: 'review' };
@@ -647,7 +754,11 @@ function buildBot() {
     ctx.session.upload = ctx.session.upload || { kind: 'review' };
     ctx.session.upload.subjectKey = ctx.match[1];
     ctx.session.awaiting = 'tch_upload_file';
-    return ctx.reply('أرسل ملف المراجعة الآن (PDF أو DOCX أو TXT).');
+    return ctx.reply(
+      'أرسل ملف المراجعة الآن (PDF أو DOCX أو TXT).\n' +
+        '• الحد الأقصى للحجم: 20 ميجابايت (حد تيليجرام للبوتات).\n' +
+        '• ملف Word القديم (.doc): احفظ كـ DOCX أو PDF.'
+    );
   });
 
   bot.action('tch:cancel', async (ctx) => {
@@ -670,9 +781,42 @@ function buildBot() {
     const fileId = doc.file_id;
     const mime = doc.mime_type || '';
     const name = doc.file_name || 'file';
-    const ext = String(path.extname(name) || '').toLowerCase();
-    if (!['.pdf', '.docx', '.txt'].includes(ext)) {
-      return ctx.reply('صيغة غير مدعومة. أرسل PDF أو DOCX أو TXT.');
+    let ext = String(path.extname(name) || '').toLowerCase();
+    if (!ext) ext = inferExtFromMime(mime);
+    if (!['.pdf', '.docx', '.txt', '.doc'].includes(ext)) {
+      return ctx.reply(
+        'صيغة غير مدعومة. أرسل PDF أو DOCX أو TXT (وليس Word القديم .doc إلا بعد تحويله).'
+      );
+    }
+
+    // دوماً نستعلم getFile من تيليجرام قبل التنزيل (أدقّ من حقل file_size المرسل وأحياناً يمنع تجاوز 20MB مبكراً)
+    let sizeBytes =
+      typeof doc.file_size === 'number' ? doc.file_size : null;
+    try {
+      const meta = await ctx.telegram.getFile(fileId);
+      if (typeof meta.file_size === 'number') sizeBytes = meta.file_size;
+    } catch (sizeErr) {
+      const szMsg = String(
+        sizeErr?.response?.description || sizeErr?.message || ''
+      );
+      if (szMsg.includes('too big')) {
+        return ctx.reply(
+          'الملف يتجاوز حد تيليجرام (حد أقصى نحو 20 ميجابايت لتنزيل البوت للملف).\n' +
+            'صغّر الـ PDF أو قسّمه، أو ارفعه من لوحة الويب (/admin ← مكتبة المراجعات).'
+        );
+      }
+      // eslint-disable-next-line no-console
+      console.error('teacher getFile meta', sizeErr);
+      return ctx.reply(
+        'تعذر التحقق من الملف عبر تيليجرام. أعد الإرسال أو جرّب ملفاً أصغر أو من لوحة /admin.'
+      );
+    }
+    if (typeof sizeBytes === 'number' && sizeBytes > TELEGRAM_BOT_MAX_FILE_BYTES) {
+      const mb = (sizeBytes / (1024 * 1024)).toFixed(1);
+      return ctx.reply(
+        `الملف كبير جداً (${mb} ميجا). تيليجرام لا يسمح للبوت بتنزيل أكثر من 20 ميجا.\n` +
+          'جرّب: ضغط PDF، أو تقسيم الملف، أو رفع الملف من لوحة الويب (/admin ← مكتبة المراجعات).'
+      );
     }
 
     const grade = gradeLabelFromKey(ctx.session?.upload?.gradeKey);
@@ -712,14 +856,65 @@ function buildBot() {
 
       ctx.session.awaiting = null;
       ctx.session.upload = null;
+      const subName = subjectLabel(subjectKey);
       return ctx.reply(
-        `تم رفع المراجعة وفهرستها.\n\nالعنوان: ${ing.title}\nعدد الأجزاء: ${ing.chunksCount}`,
+        `تم رفع المراجعة وفهرستها بنجاح.\n\n` +
+          `العنوان: ${ing.title}\n` +
+          `الصف: ${grade}\n` +
+          `المادة: ${subName}\n` +
+          `عدد أجزاء الفهرسة: ${ing.chunksCount}\n\n` +
+          `للتحقق لاحقاً: «📋 مراجعاتي المرفوعة».`,
         teacherMainKeyboard()
       );
     } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error('teacher upload error', e);
-      return ctx.reply('تعذر رفع/فهرسة الملف. حاول مرة أخرى.');
+      const raw =
+        typeof e?.message === 'string'
+          ? e.message
+          : String(e?.details || e?.hint || e?.response?.description || e || '');
+      const isTooBig =
+        raw.includes('file is too big') || raw.includes('too big');
+      if (!isTooBig) {
+        // eslint-disable-next-line no-console
+        console.error('teacher upload error', e);
+      }
+      if (raw === 'no_text_extracted' || raw.includes('no_text_extracted')) {
+        return ctx.reply(
+          'لم يُستخرج أي نص من الملف (مثلاً PDF صور فقط، أو ملف بدون نص).\n' +
+            'جرّب: تصدير PDF نصي، أو DOCX يحتوي نصاً حقيقياً وليس صوراً فقط.'
+        );
+      }
+      if (raw === 'doc_legacy_not_supported' || raw.includes('doc_legacy')) {
+        return ctx.reply(
+          'ملف Word القديم (.doc) لا يُستخرج منه النص هنا. احفظ الملف كـ «Word (.docx)» أو PDF ثم أعد الإرسال.'
+        );
+      }
+      if (raw.startsWith('word_extract_failed') || raw.includes('word_extract_failed')) {
+        return ctx.reply(
+          'تعذّر قراءة ملف Word (قد يكون تالفاً أو ليس DOCX صحيحاً). أعد الحفظ كـ DOCX أو أرسل PDF.'
+        );
+      }
+      if (raw.startsWith('unsupported file type')) {
+        return ctx.reply('صيغة الملف غير مدعومة داخلياً. أرسل PDF أو DOCX أو TXT.');
+      }
+      if (raw.includes('download failed')) {
+        return ctx.reply('تعذّر تنزيل الملف من تيليجرام. حاول مرة أخرى.');
+      }
+      if (raw.includes('file is too big') || raw.includes('too big')) {
+        return ctx.reply(
+          'الملف يتجاوز حد تيليجرام (نحو 20 ميجابايت لتنزيل البوت). صغّر الـ PDF أو ارفعه من لوحة /admin إن وُجدت.'
+        );
+      }
+      if (
+        raw.includes('relation') &&
+        raw.includes('does not exist')
+      ) {
+        return ctx.reply(
+          'خطأ في إعداد قاعدة البيانات (جداول المحتوى). تواصل مع المسؤول عن السيرفر.'
+        );
+      }
+      return ctx.reply(
+        'تعذر رفع/فهرسة الملف. إذا تكرر ذلك، راجع السجلات أو جرّب PDF/DOCX آخر.'
+      );
     }
   });
 
@@ -989,6 +1184,7 @@ function buildBot() {
 
   async function generateQuiz(ctx) {
     ensureQuizSession(ctx);
+    await ctx.sendChatAction('typing').catch(() => {});
     const subjectKey = ctx.session.quiz.subjectKey || 'other';
     const subjectName = subjectLabel(subjectKey);
     const difficulty = ctx.session.quiz.difficulty || 'medium';

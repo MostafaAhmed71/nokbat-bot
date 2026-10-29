@@ -8,6 +8,20 @@ function extOf(p) {
   return String(path.extname(p || '') || '').toLowerCase();
 }
 
+/** عندما لا يضع تيليجرام امتداداً في اسم الملف نستنتجه من نوع MIME */
+function inferExtFromMime(mime) {
+  const m = String(mime || '').toLowerCase();
+  if (m === 'application/pdf') return '.pdf';
+  if (
+    m ===
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  )
+    return '.docx';
+  if (m === 'application/msword') return '.doc';
+  if (m === 'text/plain' || m.startsWith('text/')) return '.txt';
+  return '';
+}
+
 /**
  * pdf-parse v2+ يصدّر PDFParse مع getText({ data }).
  * الإصدارات القديمة (v1) تُصدّر دالة (buffer) => Promise<{ text }>.
@@ -49,13 +63,39 @@ async function extractTextFromFile(filePath, mime) {
     return extractPdfText(buf);
   }
 
-  if (ext === '.docx' || m === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+  if (
+    ext === '.docx' ||
+    m ===
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+  ) {
     const buf = fs.readFileSync(p);
-    const out = await mammoth.extractRawText({ buffer: buf });
-    return String(out?.value || '');
+    try {
+      const out = await mammoth.extractRawText({ buffer: buf });
+      return String(out?.value || '');
+    } catch (err) {
+      throw new Error(
+        `word_extract_failed: ${err?.message || 'unknown'}`
+      );
+    }
+  }
+
+  if (ext === '.doc' || m === 'application/msword') {
+    const buf = fs.readFileSync(p);
+    try {
+      const out = await mammoth.extractRawText({ buffer: buf });
+      const t = String(out?.value || '').trim();
+      if (t) return t;
+    } catch {
+      /* mammoth لا يدعم Word القديم (.doc) عادة */
+    }
+    throw new Error('doc_legacy_not_supported');
   }
 
   throw new Error(`unsupported file type: ${ext || m || 'unknown'}`);
 }
 
-module.exports = { extractTextFromFile, extractPdfText };
+module.exports = {
+  extractTextFromFile,
+  extractPdfText,
+  inferExtFromMime,
+};

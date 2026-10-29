@@ -133,6 +133,7 @@ function registerDiagnosticChallenge(bot) {
     ctx.session.awaiting = null;
     await ctx.reply('⏳ جاري توليد 10 أسئلة... قد يستغرق ذلك نصف دقيقة.');
     try {
+      await ctx.sendChatAction('typing').catch(() => {});
       const items = await generateTenDiagnosticQuestions(key);
       ctx.session.diagnostic.items = items;
       ctx.session.diagnostic.index = 0;

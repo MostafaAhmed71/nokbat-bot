@@ -19,6 +19,15 @@ function formatStudentCommittee(s, opts = {}) {
 
 const { Markup } = require('telegraf');
 
+function parentMainKeyboard() {
+  return Markup.keyboard([
+    [Markup.button.text('📊 نتيجة ابني'), Markup.button.text('📋 لجنة ابني')],
+    [Markup.button.text('📅 جدول امتحانات ابني')],
+    [Markup.button.text('🌐 محتوى المنصة (ابني)')],
+    [Markup.button.text('🏠 القائمة الرئيسية')],
+  ]).resize();
+}
+
 function studentMainKeyboard() {
   return Markup.keyboard([
     [Markup.button.text('🤖 اسأل مساعد AI')],
@@ -26,6 +35,7 @@ function studentMainKeyboard() {
     [Markup.button.text('📊 اختبار تشخيصي')],
     [Markup.button.text('⚡ تحدي اليوم'), Markup.button.text('🏆 المتصدرين')],
     [Markup.button.text('📅 جدول الامتحانات')],
+    [Markup.button.text('🌐 محتوى المنصة التعليمية')],
     [Markup.button.text('⭐ مفضلتي')],
     [Markup.button.text('🧾 لجنّتي'), Markup.button.text('🏁 نتيجتي')],
     [Markup.button.text('⚙️ الإعدادات')],
@@ -189,6 +199,7 @@ function gradesKeyboard(prefix = 'grade:set', homeCallback = 'help:home') {
 
 module.exports = {
   formatStudentCommittee,
+  parentMainKeyboard,
   studentMainKeyboard,
   aiSubjectsKeyboard,
   quizSubjectsKeyboard,

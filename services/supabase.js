@@ -325,6 +325,75 @@ async function listExamsOnDate(dateISO) {
   return { data: data || [], error };
 }
 
+/**
+ * محتوى المنصّة الويب (جدول uploaded_materials)
+ * contentType: schedule | solved | unsolved | videos | electronic
+ */
+async function listUploadedMaterialsPlatform(stage, gradeNum, contentType) {
+  try {
+    const client = requireClient();
+    const st = String(stage || '').trim();
+    const g = Number(gradeNum);
+    const ct = String(contentType || '').trim();
+    if (!st || !Number.isFinite(g) || !ct) return { data: [], error: null };
+
+    const { data, error } = await client
+      .from('uploaded_materials')
+      .select('*')
+      .eq('stage', st)
+      .eq('grade', g)
+      .eq('content_type', ct);
+
+    if (error) {
+      if (
+        /uploaded_materials/.test(String(error.message || '')) &&
+        (/does not exist|schema cache/i.test(String(error.message || '')) ||
+          String(error.code || '') === '42P01')
+      ) {
+        return { data: [], error: null };
+      }
+      return { data: [], error };
+    }
+    return { data: data || [], error: null };
+  } catch {
+    return { data: [], error: null };
+  }
+}
+
+/** اختبارات إلكترونية نشطة كما في منصّة الويب */
+async function listElectronicTestsPlatform(stage, gradeNum) {
+  try {
+    const client = requireClient();
+    const st = String(stage || '').trim();
+    const g = Number(gradeNum);
+    if (!st || !Number.isFinite(g)) return { data: [], error: null };
+
+    const { data, error } = await client
+      .from('electronic_tests')
+      .select(
+        'id, test_title, test_description, share_token, subject_name, is_active'
+      )
+      .eq('stage', st)
+      .eq('grade', g)
+      .eq('is_active', true)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      if (
+        /electronic_tests/.test(String(error.message || '')) &&
+        (/does not exist/i.test(String(error.message || '')) ||
+          String(error.code || '') === '42P01')
+      ) {
+        return { data: [], error: null };
+      }
+      return { data: [], error };
+    }
+    return { data: data || [], error: null };
+  } catch {
+    return { data: [], error: null };
+  }
+}
+
 async function listStudentTelegramIdsByGrade(grade) {
   const client = requireClient();
   const g = String(grade || '').trim();
@@ -727,6 +796,21 @@ async function listTeachersAdmin({ nameQuery, subject, limit = 100 }) {
   return { data: data || [], error };
 }
 
+/** مراجعات/محتوى رفعه المعلم عبر تيليجرام (يُسجَّل في uploaded_by_telegram_id) */
+async function listContentItemsByUploader(telegramId, { limit = 25 } = {}) {
+  const client = requireClient();
+  const tg = String(telegramId || '').trim();
+  if (!tg) return { data: [], error: null };
+  const lim = Math.min(Math.max(1, Number(limit) || 25), 40);
+  const { data, error } = await client
+    .from('content_items')
+    .select('id, kind, grade, subject_key, title, source, created_at')
+    .eq('uploaded_by_telegram_id', tg)
+    .order('created_at', { ascending: false })
+    .limit(lim);
+  return { data: data || [], error };
+}
+
 async function listContentItemsAdmin({ titleQuery, grade, subjectKey, limit = 100 }) {
   const client = requireClient();
   const lim = Math.min(Math.max(1, Number(limit) || 100), 400);
@@ -883,6 +967,8 @@ module.exports = {
   upsertExamsSchedule,
   listExamsForGrade,
   listExamsOnDate,
+  listUploadedMaterialsPlatform,
+  listElectronicTestsPlatform,
   listStudentTelegramIdsByGrade,
   listParentTelegramIdsByStudentGrade,
   listAllStudentTelegramIds,
@@ -919,6 +1005,7 @@ module.exports = {
   listStudentsAdmin,
   listTeachersAdmin,
   listContentItemsAdmin,
+  listContentItemsByUploader,
   upsertTeacherRecord,
   upsertStudentRecord,
   insertScheduleSlot,
